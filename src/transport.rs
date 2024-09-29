@@ -2,9 +2,8 @@ use crate::{
     config::WebRTCTransportConfig,
     error::{Error, TransportErrorKind},
     media_engine,
-    publisher::Publisher,
-    router::Router,
-    subscriber::Subscriber,
+    media_track::MediaTrack,
+    router::RouterEvent,
 };
 use enclose::enc;
 use std::sync::Arc;
@@ -35,7 +34,7 @@ pub type OnTrackFn =
 #[derive(Clone)]
 pub struct Transport {
     pub id: String,
-    router: Arc<Router>,
+    pub router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     config: WebRTCTransportConfig,
     peer_connection: Option<Arc<RTCPeerConnection>>,
     rtcp_sender_channel: Arc<RtcpSender>,
@@ -49,14 +48,17 @@ pub struct Transport {
 
 impl Transport {
     // TODO: Pass ICEservers information to config from client-side.
-    pub async fn new(router: Arc<Router>, config: WebRTCTransportConfig) -> Transport {
+    pub async fn new(
+        router_event_sender: mpsc::UnboundedSender<RouterEvent>,
+        config: WebRTCTransportConfig,
+    ) -> Transport {
         let id = Uuid::new_v4().to_string();
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
 
         let mut transport = Transport {
             id,
-            router,
+            router_event_sender,
             config,
             peer_connection: None,
             rtcp_sender_channel: Arc::new(s),
@@ -71,16 +73,6 @@ impl Transport {
         transport.ice_state_hooks().await;
 
         transport
-    }
-
-    pub fn create_publisher(self) -> Publisher {
-        let transport = Arc::new(self.clone());
-        Publisher::new(transport)
-    }
-
-    pub fn create_subscriber(self) -> Subscriber {
-        let transport = Arc::new(self.clone());
-        Subscriber::new(transport)
     }
 
     pub async fn build_transport(mut self) -> Result<(), webrtc::error::Error> {
@@ -106,13 +98,13 @@ impl Transport {
                     let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
                     let mut stop_receiver = self.stop_receiver_channel.lock().await;
                     tokio::select! {
-                    data = rtcp_receiver.recv() => {
-                        if let Some(data) = data {
-                            if let Err(err) = pc.write_rtcp(&data[..]).await {
-                                tracing::error!("Error writing RTCP: {}", err);
+                        data = rtcp_receiver.recv() => {
+                            if let Some(data) = data {
+                                if let Err(err) = pc.write_rtcp(&data[..]).await {
+                                    tracing::error!("Error writing RTCP: {}", err);
+                                }
                             }
                         }
-                    }
                         _data = stop_receiver.recv() => {
                             tracing::info!("RTCP writer loop stopped");
                             return;
@@ -262,14 +254,20 @@ impl Transport {
             })));
 
         let on_track = Arc::clone(&self.on_track_fn);
-        peer.on_track(Box::new(enc!( (on_track)
+        let sender = self.router_event_sender.clone();
+        peer.on_track(Box::new(enc!( (on_track, sender)
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
-                  transiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track) async move {
+                  transceiver: Arc<RTCRtpTransceiver>| {
+                Box::pin(enc!( (on_track, sender) async move {
                     let id = track.id();
                     tracing::info!("on track: {}", id);
-                    (on_track)(track, receiver, transiver);
+                    let media_track = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone());
+                    let _ = sender.send(RouterEvent::TrackPublished(media_track));
+
+                    (on_track)(track, receiver, transceiver);
+
+                    // TODO: keep this thread until closed, and send TrackRemove event
                 }))
             }
         )));

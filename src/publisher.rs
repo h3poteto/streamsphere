@@ -12,18 +12,22 @@ pub struct Publisher {
 }
 
 impl Publisher {
-    pub fn new(transport: Arc<Transport>) -> Publisher {
+    pub fn new(transport: Arc<Transport>) -> Arc<Publisher> {
         let id = Uuid::new_v4().to_string();
-        Publisher { id, transport }
+        let publisher = Publisher { id, transport };
+        Arc::new(publisher)
     }
 
-    pub async fn publish(self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription, Error> {
+    pub async fn connect(
+        &self,
+        sdp: RTCSessionDescription,
+    ) -> Result<RTCSessionDescription, Error> {
         let answer = self.get_answer_for_offer(sdp).await?;
         Ok(answer)
     }
 
     async fn get_answer_for_offer(
-        self,
+        &self,
         offer: RTCSessionDescription,
     ) -> Result<RTCSessionDescription, Error> {
         tracing::debug!("publisher set remote description");
