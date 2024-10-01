@@ -19,12 +19,12 @@ use webrtc::{
         RTCPeerConnection,
     },
     rtcp,
-    rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
-    track::track_remote::TrackRemote,
+    rtp_transceiver::{rtp_receiver::RTCRtpReceiver, rtp_sender::RTCRtpSender, RTCRtpTransceiver},
+    track::{track_local::TrackLocal, track_remote::TrackRemote},
 };
 
-pub type RtcpSender = mpsc::UnboundedSender<Vec<Box<dyn rtcp::packet::Packet + Send + Sync>>>;
-pub type RtcpReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn rtcp::packet::Packet + Send + Sync>>>;
+pub type RtcpSender = mpsc::UnboundedSender<Box<dyn rtcp::packet::Packet + Send + Sync>>;
+pub type RtcpReceiver = mpsc::UnboundedReceiver<Box<dyn rtcp::packet::Packet + Send + Sync>>;
 
 pub type OnIceCandidateFn = Box<dyn Fn(RTCIceCandidate) + Send + Sync>;
 pub type OnNegotiationNeededFn = Box<dyn Fn(RTCSessionDescription) + Send + Sync>;
@@ -100,7 +100,7 @@ impl Transport {
                     tokio::select! {
                         data = rtcp_receiver.recv() => {
                             if let Some(data) = data {
-                                if let Err(err) = pc.write_rtcp(&data[..]).await {
+                                if let Err(err) = pc.write_rtcp(&[data]).await {
                                     tracing::error!("Error writing RTCP: {}", err);
                                 }
                             }
@@ -204,7 +204,23 @@ impl Transport {
         Ok(res)
     }
 
+    pub async fn add_track(
+        &self,
+        track: Arc<dyn TrackLocal + Send + Sync>,
+    ) -> Result<Arc<RTCRtpSender>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.add_track(track).await?;
+        Ok(res)
+    }
+
     pub async fn close(self) -> Result<(), Error> {
+        if let Err(err) = self.stop_sender_channel.lock().await.send(()) {
+            tracing::error!("failed to stop rtcp writer loop: {}", err);
+        }
         match self.peer_connection {
             Some(peer) => {
                 peer.close().await?;
@@ -255,19 +271,22 @@ impl Transport {
 
         let on_track = Arc::clone(&self.on_track_fn);
         let sender = self.router_event_sender.clone();
-        peer.on_track(Box::new(enc!( (on_track, sender)
+        let rtcp_sender = self.rtcp_sender_channel.clone();
+        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender)
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
                   transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, sender) async move {
+                Box::pin(enc!( (on_track, sender, rtcp_sender) async move {
                     let id = track.id();
                     tracing::info!("on track: {}", id);
-                    let media_track = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone());
+                    let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
                     let _ = sender.send(RouterEvent::TrackPublished(media_track));
 
                     (on_track)(track, receiver, transceiver);
 
-                    // TODO: keep this thread until closed, and send TrackRemove event
+                    // Keep this thread until closed, and send TrackRemove event
+                    let _ = closed.await;
+                    let _ = sender.send(RouterEvent::TrackRemoved(id));
                 }))
             }
         )));
