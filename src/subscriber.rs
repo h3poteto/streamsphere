@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use webrtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
@@ -12,7 +12,7 @@ use webrtc::{
 };
 
 use crate::{
-    error::Error,
+    error::{Error, SubscriberErrorKind},
     media_track::MediaTrack,
     router::RouterEvent,
     transport::{self, Transport},
@@ -75,7 +75,24 @@ impl Subscriber {
         Ok(())
     }
 
-    pub async fn subscribe_track(&self, media_track: Arc<MediaTrack>) -> Result<(), Error> {
+    pub async fn subscribe(&self, track_id: String) -> Result<(), Error> {
+        let (tx, rx) = oneshot::channel();
+
+        let _ = self
+            .router_event_sender
+            .send(RouterEvent::GetMediaTrack(track_id.clone(), tx));
+
+        let reply = rx.await.unwrap();
+        match reply {
+            None => Err(Error::new_subscriber(
+                format!("Media track for {} is not found", track_id),
+                SubscriberErrorKind::TrackNotFoundError,
+            )),
+            Some(track) => self.subscribe_track(track).await,
+        }
+    }
+
+    async fn subscribe_track(&self, media_track: Arc<MediaTrack>) -> Result<(), Error> {
         let publisher_rtcp_sender = media_track.rtcp_sender.clone();
         let ssrc = media_track.track.ssrc();
         let local_track = TrackLocalStaticRTP::new(

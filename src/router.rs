@@ -4,13 +4,13 @@ use crate::{
     config::WebRTCTransportConfig, media_track::MediaTrack, subscriber::Subscriber,
     transport::Transport,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Router {
     pub id: String,
-    tracks: HashMap<String, MediaTrack>,
+    tracks: HashMap<String, Arc<MediaTrack>>,
     subscribers: HashMap<String, Arc<Subscriber>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
 }
@@ -51,7 +51,7 @@ impl Router {
                 RouterEvent::TrackPublished(track) => {
                     let mut r = router.lock().await;
                     let track_id = track.id.clone();
-                    r.tracks.insert(track_id, track);
+                    r.tracks.insert(track_id, Arc::new(track));
                 }
                 RouterEvent::TrackRemoved(track_id) => {
                     let mut r = router.lock().await;
@@ -66,6 +66,12 @@ impl Router {
                     let mut r = router.lock().await;
                     r.subscribers.remove(&subscriber_id);
                 }
+                RouterEvent::GetMediaTrack(track_id, reply_sender) => {
+                    let r = router.lock().await;
+                    let track = r.tracks.get(&track_id);
+                    let data = track.cloned();
+                    let _ = reply_sender.send(data);
+                }
             }
         }
         tracing::info!("Router {} event loop finished", id);
@@ -77,4 +83,5 @@ pub enum RouterEvent {
     TrackRemoved(String),
     SubscriberAdded(Arc<Subscriber>),
     SubscriberRemoved(String),
+    GetMediaTrack(String, oneshot::Sender<Option<Arc<MediaTrack>>>),
 }
