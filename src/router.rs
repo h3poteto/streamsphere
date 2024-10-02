@@ -72,9 +72,16 @@ impl Router {
                     let data = track.cloned();
                     let _ = reply_sender.send(data);
                 }
+                RouterEvent::Closed => {
+                    break;
+                }
             }
         }
         tracing::info!("Router {} event loop finished", id);
+    }
+
+    pub fn close(&self) {
+        let _ = self.router_event_sender.send(RouterEvent::Closed);
     }
 }
 
@@ -84,4 +91,5 @@ pub enum RouterEvent {
     SubscriberAdded(Arc<Subscriber>),
     SubscriberRemoved(String),
     GetMediaTrack(String, oneshot::Sender<Option<Arc<MediaTrack>>>),
+    Closed,
 }

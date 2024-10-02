@@ -148,11 +148,11 @@ impl Subscriber {
                 }
             }
         }
-    }
-}
 
-impl Drop for Subscriber {
-    fn drop(&mut self) {
+        tracing::debug!("Subscriber RTCP event loop finished");
+    }
+
+    pub fn close(&self) {
         let _ = self
             .router_event_sender
             .send(RouterEvent::SubscriberRemoved(self.id.clone()));
