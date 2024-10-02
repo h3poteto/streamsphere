@@ -13,8 +13,8 @@ use crate::transport;
 pub struct MediaTrack {
     pub id: String,
     pub track: Arc<TrackRemote>,
-    rtp_receiver: Arc<RTCRtpReceiver>,
-    rtp_transceiver: Arc<RTCRtpTransceiver>,
+    _rtp_receiver: Arc<RTCRtpReceiver>,
+    _rtp_transceiver: Arc<RTCRtpTransceiver>,
     pub rtcp_sender: Arc<transport::RtcpSender>,
 }
 
@@ -37,8 +37,8 @@ impl MediaTrack {
             Self {
                 id,
                 track,
-                rtp_receiver,
-                rtp_transceiver,
+                _rtp_receiver: rtp_receiver,
+                _rtp_transceiver: rtp_transceiver,
                 rtcp_sender,
             },
             closed_receiver,
