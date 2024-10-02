@@ -1,0 +1,9 @@
+{
+  "name": "streamsphere",
+  "version": "0.1.0",
+  "main": "index.js",
+  "repository": "https://github.com/h3poteto/streamsphere",
+  "author": "h3poteto",
+  "license": "Apache-2.0",
+  "private": false
+}
