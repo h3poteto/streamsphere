@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "workspaces": [
+    "client",
+    "example"
+  ],
+  "packageManager": "yarn@4.5.0",
+  "engines": {
+    "npm": "use yarn instead",
+    "yarn": "4.5.0"
+  }
+}
