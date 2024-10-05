@@ -1347,6 +1347,7 @@ __metadata:
     next: "npm:14.2.14"
     react: "npm:^18"
     react-dom: "npm:^18"
+    streamsphere: "workspace:^"
     typescript: "npm:^5"
   languageName: unknown
   linkType: soft
@@ -2798,9 +2799,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"streamsphere@workspace:client":
+"streamsphere@workspace:^, streamsphere@workspace:streamsphere":
   version: 0.0.0-use.local
-  resolution: "streamsphere@workspace:client"
+  resolution: "streamsphere@workspace:streamsphere"
   languageName: unknown
   linkType: soft
 
