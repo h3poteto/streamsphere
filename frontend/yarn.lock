@@ -2802,6 +2802,8 @@ __metadata:
 "streamsphere@workspace:^, streamsphere@workspace:streamsphere":
   version: 0.0.0-use.local
   resolution: "streamsphere@workspace:streamsphere"
+  dependencies:
+    typescript: "npm:^5.6.2"
   languageName: unknown
   linkType: soft
 
@@ -3084,7 +3086,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@npm:^5":
+"typescript@npm:^5, typescript@npm:^5.6.2":
   version: 5.6.2
   resolution: "typescript@npm:5.6.2"
   bin:
@@ -3094,7 +3096,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@patch:typescript@npm%3A^5#optional!builtin<compat/typescript>":
+"typescript@patch:typescript@npm%3A^5#optional!builtin<compat/typescript>, typescript@patch:typescript@npm%3A^5.6.2#optional!builtin<compat/typescript>":
   version: 5.6.2
   resolution: "typescript@patch:typescript@npm%3A5.6.2#optional!builtin<compat/typescript>::version=5.6.2&hash=8c6c40"
   bin:
