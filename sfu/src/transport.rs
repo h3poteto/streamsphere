@@ -44,10 +44,10 @@ pub struct Transport {
     on_ice_candidate_fn: Arc<OnIceCandidateFn>,
     on_negotiation_needed_fn: Arc<OnNegotiationNeededFn>,
     on_track_fn: Arc<OnTrackFn>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 }
 
 impl Transport {
-    // TODO: Pass ICEservers information to config from client-side.
     pub async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
         config: WebRTCTransportConfig,
@@ -68,64 +68,13 @@ impl Transport {
             on_ice_candidate_fn: Arc::new(Box::new(|_| {})),
             on_negotiation_needed_fn: Arc::new(Box::new(|_| {})),
             on_track_fn: Arc::new(Box::new(|_, _, _| {})),
+            pending_candidates: Arc::new(Mutex::new(Vec::new())),
         };
 
         transport.ice_state_hooks().await;
+        let _ = transport.build_transport().await;
 
         transport
-    }
-
-    pub async fn build_transport(mut self) -> Result<(), webrtc::error::Error> {
-        let mut me = MediaEngine::default();
-        media_engine::register_default_codecs(&mut me)?;
-        media_engine::register_extensions(&mut me)?;
-        let api = APIBuilder::new()
-            .with_media_engine(me)
-            .with_setting_engine(self.config.setting_engine.clone())
-            .build();
-
-        let peer_connection = api
-            .new_peer_connection(self.config.configuration.clone())
-            .await?;
-
-        let pc = Some(Arc::new(peer_connection));
-        self.peer_connection = pc.clone();
-
-        if let Some(pc) = pc {
-            tokio::spawn(async move {
-                tracing::info!("RTCP writer loop");
-                loop {
-                    let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
-                    let mut stop_receiver = self.stop_receiver_channel.lock().await;
-                    tokio::select! {
-                        data = rtcp_receiver.recv() => {
-                            if let Some(data) = data {
-                                if let Err(err) = pc.write_rtcp(&[data]).await {
-                                    tracing::error!("Error writing RTCP: {}", err);
-                                }
-                            }
-                        }
-                        _data = stop_receiver.recv() => {
-                            tracing::info!("RTCP writer loop stopped");
-                            return;
-                        }
-                    };
-                }
-            });
-        }
-
-        Ok(())
-    }
-
-    // This function is for client side PeerConnection. This is called after on_ice_candidate in client-side.
-    pub async fn trickle_ice(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.add_ice_candidate(candidate).await?;
-        Ok(res)
     }
 
     pub async fn set_remote_description(&self, sdp: RTCSessionDescription) -> Result<(), Error> {
@@ -134,7 +83,17 @@ impl Transport {
             TransportErrorKind::PeerConnectionError,
         ))?;
 
+        tracing::debug!("Set remote description");
         let res = peer.set_remote_description(sdp).await?;
+
+        let pendings = self.pending_candidates.lock().await;
+        for candidate in pendings.iter() {
+            tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
+            if let Err(err) = peer.add_ice_candidate(candidate.clone()).await {
+                tracing::error!("failed to add_ice_candidate: {}", err);
+            }
+        }
+
         Ok(res)
     }
 
@@ -200,8 +159,17 @@ impl Transport {
             TransportErrorKind::PeerConnectionError,
         ))?;
 
-        let res = peer.add_ice_candidate(candidate).await?;
-        Ok(res)
+        tracing::debug!("Adding ICE candidate for {:#?}", candidate);
+
+        if let Some(_rd) = peer.remote_description().await {
+            let _ = peer.add_ice_candidate(candidate.clone()).await?;
+            tracing::debug!("ICE candidate added");
+        } else {
+            tracing::debug!("ICE candidate added as pending");
+            self.pending_candidates.lock().await.push(candidate.clone());
+        }
+
+        Ok(())
     }
 
     pub async fn add_track(
@@ -228,6 +196,50 @@ impl Transport {
             }
             None => Ok(()),
         }
+    }
+
+    async fn build_transport(&mut self) -> Result<(), webrtc::error::Error> {
+        let mut me = MediaEngine::default();
+        media_engine::register_default_codecs(&mut me)?;
+        media_engine::register_extensions(&mut me)?;
+        let api = APIBuilder::new()
+            .with_media_engine(me)
+            .with_setting_engine(self.config.setting_engine.clone())
+            .build();
+
+        let peer_connection = api
+            .new_peer_connection(self.config.configuration.clone())
+            .await?;
+
+        let pc = Some(Arc::new(peer_connection));
+        self.peer_connection = pc.clone();
+
+        if let Some(pc) = pc {
+            let rtcp_receiver = self.rtcp_receiver_channel.clone();
+            let stop_receiver = self.stop_receiver_channel.clone();
+            tokio::spawn(async move {
+                tracing::info!("RTCP writer loop");
+                loop {
+                    let mut rtcp_receiver = rtcp_receiver.lock().await;
+                    let mut stop_receiver = stop_receiver.lock().await;
+                    tokio::select! {
+                        data = rtcp_receiver.recv() => {
+                            if let Some(data) = data {
+                                if let Err(err) = pc.write_rtcp(&[data]).await {
+                                    tracing::error!("Error writing RTCP: {}", err);
+                                }
+                            }
+                        }
+                        _data = stop_receiver.recv() => {
+                            tracing::info!("RTCP writer loop stopped");
+                            return;
+                        }
+                    };
+                }
+            });
+        }
+
+        Ok(())
     }
 
     async fn ice_state_hooks(&mut self) -> Option<()> {
