@@ -11,7 +11,11 @@ use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder},
-    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+    data_channel::{data_channel_init::RTCDataChannelInit, RTCDataChannel},
+    ice_transport::{
+        ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+        ice_gatherer_state::RTCIceGathererState,
+    },
     peer_connection::{
         offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
         peer_connection_state::RTCPeerConnectionState,
@@ -41,9 +45,11 @@ pub struct Transport {
     rtcp_receiver_channel: Arc<Mutex<RtcpReceiver>>,
     stop_sender_channel: Arc<Mutex<mpsc::UnboundedSender<()>>>,
     stop_receiver_channel: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
-    on_ice_candidate_fn: Arc<OnIceCandidateFn>,
-    on_negotiation_needed_fn: Arc<OnNegotiationNeededFn>,
-    on_track_fn: Arc<OnTrackFn>,
+    on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
+    on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
+    on_track_fn: Arc<Mutex<OnTrackFn>>,
+    ice_gathering_complete_sender: mpsc::UnboundedSender<()>,
+    pub ice_gathering_complete_receiver: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 }
 
@@ -55,6 +61,7 @@ impl Transport {
         let id = Uuid::new_v4().to_string();
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
+        let (ice_sender, ice_receiver) = mpsc::unbounded_channel();
 
         let mut transport = Transport {
             id,
@@ -65,14 +72,16 @@ impl Transport {
             rtcp_receiver_channel: Arc::new(Mutex::new(r)),
             stop_sender_channel: Arc::new(Mutex::new(stop_sender)),
             stop_receiver_channel: Arc::new(Mutex::new(stop_receiver)),
-            on_ice_candidate_fn: Arc::new(Box::new(|_| {})),
-            on_negotiation_needed_fn: Arc::new(Box::new(|_| {})),
-            on_track_fn: Arc::new(Box::new(|_, _, _| {})),
+            on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            on_track_fn: Arc::new(Mutex::new(Box::new(|_, _, _| {}))),
+            ice_gathering_complete_sender: ice_sender,
+            ice_gathering_complete_receiver: Arc::new(Mutex::new(ice_receiver)),
             pending_candidates: Arc::new(Mutex::new(Vec::new())),
         };
 
-        transport.ice_state_hooks().await;
         let _ = transport.build_transport().await;
+        transport.ice_state_hooks().await;
 
         transport
     }
@@ -84,8 +93,8 @@ impl Transport {
         ))?;
 
         tracing::debug!("Set remote description");
+        tracing::debug!("sdp: {:#?}", sdp);
         let res = peer.set_remote_description(sdp).await?;
-
         let pendings = self.pending_candidates.lock().await;
         for candidate in pendings.iter() {
             tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
@@ -148,6 +157,7 @@ impl Transport {
             "PeerConnection does not exist".to_string(),
             TransportErrorKind::PeerConnectionError,
         ))?;
+        tracing::debug!("Waiting ICE gathering complete");
 
         let promise = peer.gathering_complete_promise().await;
         Ok(promise)
@@ -182,6 +192,20 @@ impl Transport {
         ))?;
 
         let res = peer.add_track(track).await?;
+        Ok(res)
+    }
+
+    pub async fn create_data_channel(
+        &self,
+        label: &str,
+        options: Option<RTCDataChannelInit>,
+    ) -> Result<Arc<RTCDataChannel>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.create_data_channel(label, options).await?;
         Ok(res)
     }
 
@@ -242,8 +266,8 @@ impl Transport {
         Ok(())
     }
 
-    async fn ice_state_hooks(&mut self) -> Option<()> {
-        let peer = self.peer_connection.clone()?;
+    async fn ice_state_hooks(&mut self) {
+        let peer = self.peer_connection.clone().unwrap();
         let on_ice_candidate = Arc::clone(&self.on_ice_candidate_fn);
 
         // This callback is called after initializing PeerConnection with ICE servers.
@@ -251,10 +275,11 @@ impl Transport {
             Box::pin({
                 let func = on_ice_candidate.clone();
                 async move {
+                    let locked = func.lock().await;
                     if let Some(candidate) = candidate {
                         tracing::info!("on ice candidate: {}", candidate);
                         // Call on_ice_candidate_fn as callback.
-                        (func)(candidate);
+                        (locked)(candidate);
                     }
                 }
             })
@@ -265,7 +290,7 @@ impl Transport {
         peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed) move || {
                 Box::pin(enc!( (downgraded_peer, on_negotiation_needed) async move {
                     tracing::info!("on negotiation needed");
-
+                    let locked = on_negotiation_needed.lock().await;
                     if let Some(pc) = downgraded_peer.upgrade() {
                         if pc.connection_state() == RTCPeerConnectionState::Closed {
                                 return;
@@ -276,7 +301,7 @@ impl Transport {
                         let offer = pc.local_description().await.unwrap();
 
                         tracing::info!("peer sending offer");
-                        (on_negotiation_needed)(offer);
+                        (locked)(offer);
                     }
                 }))
             })));
@@ -289,12 +314,13 @@ impl Transport {
                   receiver: Arc<RTCRtpReceiver>,
                   transceiver: Arc<RTCRtpTransceiver>| {
                 Box::pin(enc!( (on_track, sender, rtcp_sender) async move {
+                    let locked = on_track.lock().await;
                     let id = track.id();
                     tracing::info!("on track: {}", id);
                     let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
                     let _ = sender.send(RouterEvent::TrackPublished(media_track));
 
-                    (on_track)(track, receiver, transceiver);
+                    (locked)(track, receiver, transceiver);
 
                     // Keep this thread until closed, and send TrackRemove event
                     let _ = closed.await;
@@ -303,19 +329,30 @@ impl Transport {
             }
         )));
 
-        Some(())
+        let sender = self.ice_gathering_complete_sender.clone();
+        peer.on_ice_gathering_state_change(enc!((sender) Box::new(move |state| {
+            Box::pin(enc!((sender) async move {
+                tracing::debug!("ICE gathering state changed: {}", state);
+                if state == RTCIceGathererState::Complete {
+                    let _ = sender.send(());
+                }
+            }))
+        })));
     }
 
     // Hooks
-    pub async fn on_ice_candidate(&mut self, f: OnIceCandidateFn) {
-        self.on_ice_candidate_fn = Arc::new(f);
+    pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
+        let mut callback = self.on_ice_candidate_fn.lock().await;
+        *callback = f;
     }
 
-    pub async fn on_negotiation_needed(&mut self, f: OnNegotiationNeededFn) {
-        self.on_negotiation_needed_fn = Arc::new(f);
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededFn) {
+        let mut callback = self.on_negotiation_needed_fn.lock().await;
+        *callback = f;
     }
 
     pub async fn on_track(&mut self, f: OnTrackFn) {
-        self.on_track_fn = Arc::new(f);
+        let mut callback = self.on_track_fn.lock().await;
+        *callback = f;
     }
 }

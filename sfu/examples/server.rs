@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use actix::{Actor, Message, StreamHandler};
+use actix::{Actor, Addr, Message, StreamHandler};
 use actix::{AsyncContext, Handler};
 use actix_web::web::{Data, Query};
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
@@ -105,12 +105,17 @@ impl WebSocket {
 impl Actor for WebSocket {
     type Context = ws::WebsocketContext<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         tracing::info!("WebSocket started");
+        let address = ctx.address();
+        self.room.add_user(address)
     }
 
-    fn stopped(&mut self, _ctx: &mut Self::Context) {
+    fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::info!("WebSocket stopped");
+        let address = ctx.address();
+        // TODO: clean up
+        self.room.remove_user(address)
     }
 }
 
@@ -165,6 +170,40 @@ impl Handler<ReceivedMessage> for WebSocket {
                     address.do_send(SendingMessage::Answer { sdp: answer });
                 });
             }
+            ReceivedMessage::Subscribe { track_id } => {
+                let subscriber = self.subscriber.clone();
+                let transport = self.transport.clone();
+                let addr = address.clone();
+                actix::spawn(async move {
+                    transport
+                        .on_ice_candidate(Box::new(move |candidate| {
+                            let init = candidate.to_json().expect("failed to parse candidate");
+                            addr.do_send(SendingMessage::Ice { candidate: init });
+                        }))
+                        .await;
+                    let offer = subscriber
+                        .subscribe(track_id)
+                        .await
+                        .expect("failed to connect subscriber");
+
+                    address.do_send(SendingMessage::Offer { sdp: offer });
+                });
+            }
+            ReceivedMessage::Answer { sdp } => {
+                let subscriber = self.subscriber.clone();
+                actix::spawn(async move {
+                    let _ = subscriber
+                        .set_answer(sdp)
+                        .await
+                        .expect("failed to set answer");
+                });
+            }
+            ReceivedMessage::Published { track_id } => {
+                self.room.get_peers(&address).iter().for_each(|peer| {
+                    let id = track_id.clone();
+                    peer.do_send(SendingMessage::Published { track_id: id });
+                });
+            }
         }
     }
 }
@@ -173,6 +212,7 @@ impl Handler<SendingMessage> for WebSocket {
     type Result = ();
 
     fn handle(&mut self, msg: SendingMessage, ctx: &mut Self::Context) -> Self::Result {
+        tracing::debug!("sending message: {:?}", msg);
         ctx.text(serde_json::to_string(&msg).expect("failed to parse SendingMessage"));
     }
 }
@@ -189,10 +229,17 @@ impl Handler<InternalMessage> for WebSocket {
 enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Ping,
+    // Seems like client-side (JS) RTCIceCandidate struct is equal RTCIceCandidateInit.
     #[serde(rename_all = "camelCase")]
     Ice { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
     Offer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Subscribe { track_id: String },
+    #[serde(rename_all = "camelCase")]
+    Answer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Published { track_id: String },
 }
 
 #[derive(Serialize, Message, Debug)]
@@ -203,6 +250,12 @@ enum SendingMessage {
     Pong,
     #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Offer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Ice { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    Published { track_id: String },
 }
 
 #[derive(Message, Debug)]
@@ -239,10 +292,30 @@ impl RoomOwner {
 struct Room {
     id: String,
     pub router: Arc<Mutex<streamsphere::router::Router>>,
+    users: std::sync::Mutex<Vec<Addr<WebSocket>>>,
 }
 
 impl Room {
     pub fn new(id: String, router: Arc<Mutex<streamsphere::router::Router>>) -> Self {
-        Self { id, router }
+        Self {
+            id,
+            router,
+            users: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn add_user(&self, user: Addr<WebSocket>) {
+        let mut users = self.users.lock().unwrap();
+        users.push(user);
+    }
+
+    pub fn remove_user(&self, user: Addr<WebSocket>) {
+        let mut users = self.users.lock().unwrap();
+        users.retain(|u| u != &user);
+    }
+
+    pub fn get_peers(&self, user: &Addr<WebSocket>) -> Vec<Addr<WebSocket>> {
+        let users = self.users.lock().unwrap();
+        users.iter().filter(|u| u != &user).cloned().collect()
     }
 }
