@@ -85,13 +85,15 @@ struct WebSocket {
 }
 
 impl WebSocket {
+    // This function is called when a new user connect to this server.
     pub async fn new(room: Arc<Room>) -> Self {
+        tracing::info!("Starting WebSocket");
         let r = room.router.clone();
         let router = r.lock().await;
         let config = streamsphere::config::WebRTCTransportConfig::default();
         let transport = router.create_transport(config).await;
         let arc = Arc::new(transport);
-        let publisher = streamsphere::publisher::Publisher::new(arc.clone());
+        let publisher = streamsphere::publisher::Publisher::new(arc.clone()).await;
         let subscriber = streamsphere::subscriber::Subscriber::new(arc.clone());
         Self {
             room,
@@ -106,16 +108,16 @@ impl Actor for WebSocket {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        tracing::info!("WebSocket started");
+        tracing::info!("New WebSocket connection is started");
         let address = ctx.address();
-        self.room.add_user(address)
+        self.room.add_user(address);
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
-        tracing::info!("WebSocket stopped");
+        tracing::info!("The WebSocket connection is stopped");
         let address = ctx.address();
         // TODO: clean up
-        self.room.remove_user(address)
+        self.room.remove_user(address);
     }
 }
 
@@ -198,10 +200,21 @@ impl Handler<ReceivedMessage> for WebSocket {
                         .expect("failed to set answer");
                 });
             }
-            ReceivedMessage::Published { track_id } => {
-                self.room.get_peers(&address).iter().for_each(|peer| {
-                    let id = track_id.clone();
-                    peer.do_send(SendingMessage::Published { track_id: id });
+            ReceivedMessage::Publish { track_id } => {
+                let published_receiver = self.publisher.published_receiver.clone();
+                let room = self.room.clone();
+                actix::spawn(async move {
+                    while let Some(published_id) = published_receiver.lock().await.recv().await {
+                        if published_id == track_id {
+                            tracing::debug!("published a track: {}", published_id);
+                            room.get_peers(&address).iter().for_each(|peer| {
+                                let id = track_id.clone();
+                                peer.do_send(SendingMessage::Published { track_id: id });
+                            });
+                        } else {
+                            tracing::debug!("unknown track is published: {}", published_id);
+                        }
+                    }
                 });
             }
         }
@@ -239,7 +252,7 @@ enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
-    Published { track_id: String },
+    Publish { track_id: String },
 }
 
 #[derive(Serialize, Message, Debug)]

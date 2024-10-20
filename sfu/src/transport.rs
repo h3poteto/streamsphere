@@ -51,6 +51,7 @@ pub struct Transport {
     ice_gathering_complete_sender: mpsc::UnboundedSender<()>,
     pub ice_gathering_complete_receiver: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
+    published_sender: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 }
 
 impl Transport {
@@ -78,6 +79,7 @@ impl Transport {
             ice_gathering_complete_sender: ice_sender,
             ice_gathering_complete_receiver: Arc::new(Mutex::new(ice_receiver)),
             pending_candidates: Arc::new(Mutex::new(Vec::new())),
+            published_sender: Arc::new(Mutex::new(None)),
         };
 
         let _ = transport.build_transport().await;
@@ -86,14 +88,21 @@ impl Transport {
         transport
     }
 
-    pub async fn set_remote_description(&self, sdp: RTCSessionDescription) -> Result<(), Error> {
+    pub(crate) async fn set_published_sender(&self, sender: mpsc::UnboundedSender<String>) {
+        let mut locked_sender = self.published_sender.lock().await;
+        *locked_sender = Some(sender);
+    }
+
+    pub(crate) async fn set_remote_description(
+        &self,
+        sdp: RTCSessionDescription,
+    ) -> Result<(), Error> {
         let peer = self.peer_connection.clone().ok_or(Error::new_transport(
             "PeerConnection does not exist".to_string(),
             TransportErrorKind::PeerConnectionError,
         ))?;
 
         tracing::debug!("Set remote description");
-        tracing::debug!("sdp: {:#?}", sdp);
         let res = peer.set_remote_description(sdp).await?;
         let pendings = self.pending_candidates.lock().await;
         for candidate in pendings.iter() {
@@ -106,7 +115,10 @@ impl Transport {
         Ok(res)
     }
 
-    pub async fn set_local_description(&self, sdp: RTCSessionDescription) -> Result<(), Error> {
+    pub(crate) async fn set_local_description(
+        &self,
+        sdp: RTCSessionDescription,
+    ) -> Result<(), Error> {
         let peer = self.peer_connection.clone().ok_or(Error::new_transport(
             "PeerConnection does not exist".to_string(),
             TransportErrorKind::PeerConnectionError,
@@ -116,7 +128,7 @@ impl Transport {
         Ok(res)
     }
 
-    pub async fn create_offer(
+    pub(crate) async fn create_offer(
         &self,
         options: Option<RTCOfferOptions>,
     ) -> Result<RTCSessionDescription, Error> {
@@ -129,7 +141,7 @@ impl Transport {
         Ok(offer)
     }
 
-    pub async fn create_answer(
+    pub(crate) async fn create_answer(
         &self,
         options: Option<RTCAnswerOptions>,
     ) -> Result<RTCSessionDescription, Error> {
@@ -142,7 +154,7 @@ impl Transport {
         Ok(answer)
     }
 
-    pub async fn local_description(&self) -> Result<Option<RTCSessionDescription>, Error> {
+    pub(crate) async fn local_description(&self) -> Result<Option<RTCSessionDescription>, Error> {
         let peer = self.peer_connection.clone().ok_or(Error::new_transport(
             "PeerConnection does not exist".to_string(),
             TransportErrorKind::PeerConnectionError,
@@ -152,7 +164,8 @@ impl Transport {
         Ok(answer)
     }
 
-    pub async fn gathering_complete_promise(&self) -> Result<mpsc::Receiver<()>, Error> {
+    // TODO: we don't use this
+    pub(crate) async fn gathering_complete_promise(&self) -> Result<mpsc::Receiver<()>, Error> {
         let peer = self.peer_connection.clone().ok_or(Error::new_transport(
             "PeerConnection does not exist".to_string(),
             TransportErrorKind::PeerConnectionError,
@@ -173,16 +186,14 @@ impl Transport {
 
         if let Some(_rd) = peer.remote_description().await {
             let _ = peer.add_ice_candidate(candidate.clone()).await?;
-            tracing::debug!("ICE candidate added");
         } else {
-            tracing::debug!("ICE candidate added as pending");
             self.pending_candidates.lock().await.push(candidate.clone());
         }
 
         Ok(())
     }
 
-    pub async fn add_track(
+    pub(crate) async fn add_track(
         &self,
         track: Arc<dyn TrackLocal + Send + Sync>,
     ) -> Result<Arc<RTCRtpSender>, Error> {
@@ -195,7 +206,7 @@ impl Transport {
         Ok(res)
     }
 
-    pub async fn create_data_channel(
+    pub(crate) async fn create_data_channel(
         &self,
         label: &str,
         options: Option<RTCDataChannelInit>,
@@ -309,14 +320,20 @@ impl Transport {
         let on_track = Arc::clone(&self.on_track_fn);
         let sender = self.router_event_sender.clone();
         let rtcp_sender = self.rtcp_sender_channel.clone();
-        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender)
+        let published_sender = self.published_sender.clone();
+        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender, published_sender)
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
                   transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, sender, rtcp_sender) async move {
+                Box::pin(enc!( (on_track, sender, rtcp_sender, published_sender) async move {
                     let locked = on_track.lock().await;
                     let id = track.id();
-                    tracing::info!("on track: {}", id);
+                    let ssrc = track.ssrc();
+                    tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
+                    let locked_sender = published_sender.lock().await ;
+                    if let Some(sender) = &*locked_sender {
+                        let _ = sender.send(id.clone());
+                    }
                     let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
                     let _ = sender.send(RouterEvent::TrackPublished(media_track));
 

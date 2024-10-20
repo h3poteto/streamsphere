@@ -125,6 +125,7 @@ export default function Room() {
       console.debug("gathering change", event);
     };
     c.ontrack = (event) => {
+      console.debug("track added", event);
       const track = event.track;
       const stream = new MediaStream([track]);
       setRecevingStream((prev) => ({
@@ -144,11 +145,10 @@ export default function Room() {
         localVideo.current.srcObject = stream;
       }
       stream.getTracks().forEach((track) => {
-        // use this track id for subscribers
         console.log("adding track", track.id);
         conn.current!.addTrack(track);
         const payload = {
-          action: "Published",
+          action: "Publish",
           trackId: track.id,
         };
         ws.current?.send(JSON.stringify(payload));
@@ -198,11 +198,13 @@ export default function Room() {
         <h3>receving video</h3>
         {Object.keys(recevingStream).map((key) => (
           <div key={key}>
+            <h4>{key}</h4>
             {recevingStream[key] && (
               <video
                 id={key}
                 muted
                 autoPlay
+                controls
                 ref={(video) => {
                   if (video && recevingStream[key]) {
                     video.srcObject = recevingStream[key];

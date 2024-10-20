@@ -12,7 +12,6 @@ use webrtc::{
         header::{PacketType, FORMAT_PLI},
     },
     rtp_transceiver::rtp_sender::RTCRtpSender,
-    track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
 use crate::{
@@ -111,23 +110,17 @@ impl Subscriber {
 
     async fn subscribe_track(&self, media_track: Arc<MediaTrack>) -> Result<(), Error> {
         let publisher_rtcp_sender = media_track.rtcp_sender.clone();
-        let ssrc = media_track.track.ssrc();
-        let local_track = TrackLocalStaticRTP::new(
-            media_track.track.codec().capability,
-            media_track.track.id(),
-            media_track.track.stream_id(),
-        );
-        let rtp_sender = self.transport.add_track(Arc::new(local_track)).await?;
+        let local_track = media_track.track.clone();
+        let rtp_sender = self.transport.add_track(local_track).await?;
 
         tokio::spawn(enc!((rtp_sender, publisher_rtcp_sender) async move {
-            Self::rtcp_event_loop(ssrc, rtp_sender, publisher_rtcp_sender).await;
+            Self::rtcp_event_loop(rtp_sender, publisher_rtcp_sender).await;
         }));
 
         Ok(())
     }
 
     pub async fn rtcp_event_loop(
-        ssrc: u32,
         rtp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
     ) {
@@ -151,8 +144,7 @@ impl Subscriber {
                     PacketType::PayloadSpecificFeedback => match header.count {
                         FORMAT_PLI => {
                             if let Some(pli) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>() {
-                                let mut pli = pli.clone();
-                                pli.media_ssrc = ssrc;
+                                let pli = pli.clone();
                                 match publisher_rtcp_sender.send(Box::new(pli)) {
                                     Ok(_) => tracing::trace!("send rtcp"),
                                     Err(err) => tracing::error!("failed to send rtcp: {}", err)
