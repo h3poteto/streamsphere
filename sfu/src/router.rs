@@ -36,6 +36,10 @@ impl Router {
         router
     }
 
+    pub fn track_ids(&self) -> Vec<String> {
+        self.tracks.clone().into_iter().map(|(k, _)| k).collect()
+    }
+
     pub async fn create_transport(&self, transport_config: WebRTCTransportConfig) -> Transport {
         let tx = self.router_event_sender.clone();
         Transport::new(tx, transport_config).await

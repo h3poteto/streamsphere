@@ -11,7 +11,11 @@ use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder},
-    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+    data_channel::{data_channel_init::RTCDataChannelInit, RTCDataChannel},
+    ice_transport::{
+        ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+        ice_gatherer_state::RTCIceGathererState,
+    },
     peer_connection::{
         offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
         peer_connection_state::RTCPeerConnectionState,
@@ -41,13 +45,16 @@ pub struct Transport {
     rtcp_receiver_channel: Arc<Mutex<RtcpReceiver>>,
     stop_sender_channel: Arc<Mutex<mpsc::UnboundedSender<()>>>,
     stop_receiver_channel: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
-    on_ice_candidate_fn: Arc<OnIceCandidateFn>,
-    on_negotiation_needed_fn: Arc<OnNegotiationNeededFn>,
-    on_track_fn: Arc<OnTrackFn>,
+    on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
+    on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
+    on_track_fn: Arc<Mutex<OnTrackFn>>,
+    ice_gathering_complete_sender: mpsc::UnboundedSender<()>,
+    pub ice_gathering_complete_receiver: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
+    published_sender: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
 }
 
 impl Transport {
-    // TODO: Pass ICEservers information to config from client-side.
     pub async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
         config: WebRTCTransportConfig,
@@ -55,6 +62,7 @@ impl Transport {
         let id = Uuid::new_v4().to_string();
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
+        let (ice_sender, ice_receiver) = mpsc::unbounded_channel();
 
         let mut transport = Transport {
             id,
@@ -65,17 +73,167 @@ impl Transport {
             rtcp_receiver_channel: Arc::new(Mutex::new(r)),
             stop_sender_channel: Arc::new(Mutex::new(stop_sender)),
             stop_receiver_channel: Arc::new(Mutex::new(stop_receiver)),
-            on_ice_candidate_fn: Arc::new(Box::new(|_| {})),
-            on_negotiation_needed_fn: Arc::new(Box::new(|_| {})),
-            on_track_fn: Arc::new(Box::new(|_, _, _| {})),
+            on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            on_track_fn: Arc::new(Mutex::new(Box::new(|_, _, _| {}))),
+            ice_gathering_complete_sender: ice_sender,
+            ice_gathering_complete_receiver: Arc::new(Mutex::new(ice_receiver)),
+            pending_candidates: Arc::new(Mutex::new(Vec::new())),
+            published_sender: Arc::new(Mutex::new(None)),
         };
 
+        let _ = transport.build_transport().await;
         transport.ice_state_hooks().await;
 
         transport
     }
 
-    pub async fn build_transport(mut self) -> Result<(), webrtc::error::Error> {
+    pub(crate) async fn set_published_sender(&self, sender: mpsc::UnboundedSender<String>) {
+        let mut locked_sender = self.published_sender.lock().await;
+        *locked_sender = Some(sender);
+    }
+
+    pub(crate) async fn set_remote_description(
+        &self,
+        sdp: RTCSessionDescription,
+    ) -> Result<(), Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        tracing::debug!("Set remote description");
+        let res = peer.set_remote_description(sdp).await?;
+        let pendings = self.pending_candidates.lock().await;
+        for candidate in pendings.iter() {
+            tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
+            if let Err(err) = peer.add_ice_candidate(candidate.clone()).await {
+                tracing::error!("failed to add_ice_candidate: {}", err);
+            }
+        }
+
+        Ok(res)
+    }
+
+    pub(crate) async fn set_local_description(
+        &self,
+        sdp: RTCSessionDescription,
+    ) -> Result<(), Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.set_local_description(sdp).await?;
+        Ok(res)
+    }
+
+    pub(crate) async fn create_offer(
+        &self,
+        options: Option<RTCOfferOptions>,
+    ) -> Result<RTCSessionDescription, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let offer = peer.create_offer(options).await?;
+        Ok(offer)
+    }
+
+    pub(crate) async fn create_answer(
+        &self,
+        options: Option<RTCAnswerOptions>,
+    ) -> Result<RTCSessionDescription, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let answer = peer.create_answer(options).await?;
+        Ok(answer)
+    }
+
+    pub(crate) async fn local_description(&self) -> Result<Option<RTCSessionDescription>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let answer = peer.local_description().await;
+        Ok(answer)
+    }
+
+    // TODO: we don't use this
+    pub(crate) async fn gathering_complete_promise(&self) -> Result<mpsc::Receiver<()>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+        tracing::debug!("Waiting ICE gathering complete");
+
+        let promise = peer.gathering_complete_promise().await;
+        Ok(promise)
+    }
+
+    pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        tracing::debug!("Adding ICE candidate for {:#?}", candidate);
+
+        if let Some(_rd) = peer.remote_description().await {
+            let _ = peer.add_ice_candidate(candidate.clone()).await?;
+        } else {
+            self.pending_candidates.lock().await.push(candidate.clone());
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn add_track(
+        &self,
+        track: Arc<dyn TrackLocal + Send + Sync>,
+    ) -> Result<Arc<RTCRtpSender>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.add_track(track).await?;
+        Ok(res)
+    }
+
+    pub(crate) async fn create_data_channel(
+        &self,
+        label: &str,
+        options: Option<RTCDataChannelInit>,
+    ) -> Result<Arc<RTCDataChannel>, Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.create_data_channel(label, options).await?;
+        Ok(res)
+    }
+
+    pub async fn close(self) -> Result<(), Error> {
+        if let Err(err) = self.stop_sender_channel.lock().await.send(()) {
+            tracing::error!("failed to stop rtcp writer loop: {}", err);
+        }
+        match self.peer_connection {
+            Some(peer) => {
+                peer.close().await?;
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
+    async fn build_transport(&mut self) -> Result<(), webrtc::error::Error> {
         let mut me = MediaEngine::default();
         media_engine::register_default_codecs(&mut me)?;
         media_engine::register_extensions(&mut me)?;
@@ -92,11 +250,13 @@ impl Transport {
         self.peer_connection = pc.clone();
 
         if let Some(pc) = pc {
+            let rtcp_receiver = self.rtcp_receiver_channel.clone();
+            let stop_receiver = self.stop_receiver_channel.clone();
             tokio::spawn(async move {
                 tracing::info!("RTCP writer loop");
                 loop {
-                    let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
-                    let mut stop_receiver = self.stop_receiver_channel.lock().await;
+                    let mut rtcp_receiver = rtcp_receiver.lock().await;
+                    let mut stop_receiver = stop_receiver.lock().await;
                     tokio::select! {
                         data = rtcp_receiver.recv() => {
                             if let Some(data) = data {
@@ -117,121 +277,8 @@ impl Transport {
         Ok(())
     }
 
-    // This function is for client side PeerConnection. This is called after on_ice_candidate in client-side.
-    pub async fn trickle_ice(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.add_ice_candidate(candidate).await?;
-        Ok(res)
-    }
-
-    pub async fn set_remote_description(&self, sdp: RTCSessionDescription) -> Result<(), Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.set_remote_description(sdp).await?;
-        Ok(res)
-    }
-
-    pub async fn set_local_description(&self, sdp: RTCSessionDescription) -> Result<(), Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.set_local_description(sdp).await?;
-        Ok(res)
-    }
-
-    pub async fn create_offer(
-        &self,
-        options: Option<RTCOfferOptions>,
-    ) -> Result<RTCSessionDescription, Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let offer = peer.create_offer(options).await?;
-        Ok(offer)
-    }
-
-    pub async fn create_answer(
-        &self,
-        options: Option<RTCAnswerOptions>,
-    ) -> Result<RTCSessionDescription, Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let answer = peer.create_answer(options).await?;
-        Ok(answer)
-    }
-
-    pub async fn local_description(&self) -> Result<Option<RTCSessionDescription>, Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let answer = peer.local_description().await;
-        Ok(answer)
-    }
-
-    pub async fn gathering_complete_promise(&self) -> Result<mpsc::Receiver<()>, Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let promise = peer.gathering_complete_promise().await;
-        Ok(promise)
-    }
-
-    pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.add_ice_candidate(candidate).await?;
-        Ok(res)
-    }
-
-    pub async fn add_track(
-        &self,
-        track: Arc<dyn TrackLocal + Send + Sync>,
-    ) -> Result<Arc<RTCRtpSender>, Error> {
-        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
-            "PeerConnection does not exist".to_string(),
-            TransportErrorKind::PeerConnectionError,
-        ))?;
-
-        let res = peer.add_track(track).await?;
-        Ok(res)
-    }
-
-    pub async fn close(self) -> Result<(), Error> {
-        if let Err(err) = self.stop_sender_channel.lock().await.send(()) {
-            tracing::error!("failed to stop rtcp writer loop: {}", err);
-        }
-        match self.peer_connection {
-            Some(peer) => {
-                peer.close().await?;
-                Ok(())
-            }
-            None => Ok(()),
-        }
-    }
-
-    async fn ice_state_hooks(&mut self) -> Option<()> {
-        let peer = self.peer_connection.clone()?;
+    async fn ice_state_hooks(&mut self) {
+        let peer = self.peer_connection.clone().unwrap();
         let on_ice_candidate = Arc::clone(&self.on_ice_candidate_fn);
 
         // This callback is called after initializing PeerConnection with ICE servers.
@@ -239,10 +286,11 @@ impl Transport {
             Box::pin({
                 let func = on_ice_candidate.clone();
                 async move {
+                    let locked = func.lock().await;
                     if let Some(candidate) = candidate {
                         tracing::info!("on ice candidate: {}", candidate);
                         // Call on_ice_candidate_fn as callback.
-                        (func)(candidate);
+                        (locked)(candidate);
                     }
                 }
             })
@@ -253,7 +301,7 @@ impl Transport {
         peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed) move || {
                 Box::pin(enc!( (downgraded_peer, on_negotiation_needed) async move {
                     tracing::info!("on negotiation needed");
-
+                    let locked = on_negotiation_needed.lock().await;
                     if let Some(pc) = downgraded_peer.upgrade() {
                         if pc.connection_state() == RTCPeerConnectionState::Closed {
                                 return;
@@ -264,7 +312,7 @@ impl Transport {
                         let offer = pc.local_description().await.unwrap();
 
                         tracing::info!("peer sending offer");
-                        (on_negotiation_needed)(offer);
+                        (locked)(offer);
                     }
                 }))
             })));
@@ -272,17 +320,24 @@ impl Transport {
         let on_track = Arc::clone(&self.on_track_fn);
         let sender = self.router_event_sender.clone();
         let rtcp_sender = self.rtcp_sender_channel.clone();
-        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender)
+        let published_sender = self.published_sender.clone();
+        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender, published_sender)
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
                   transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, sender, rtcp_sender) async move {
+                Box::pin(enc!( (on_track, sender, rtcp_sender, published_sender) async move {
+                    let locked = on_track.lock().await;
                     let id = track.id();
-                    tracing::info!("on track: {}", id);
+                    let ssrc = track.ssrc();
+                    tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
+                    let locked_sender = published_sender.lock().await ;
+                    if let Some(sender) = &*locked_sender {
+                        let _ = sender.send(id.clone());
+                    }
                     let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
                     let _ = sender.send(RouterEvent::TrackPublished(media_track));
 
-                    (on_track)(track, receiver, transceiver);
+                    (locked)(track, receiver, transceiver);
 
                     // Keep this thread until closed, and send TrackRemove event
                     let _ = closed.await;
@@ -291,19 +346,30 @@ impl Transport {
             }
         )));
 
-        Some(())
+        let sender = self.ice_gathering_complete_sender.clone();
+        peer.on_ice_gathering_state_change(enc!((sender) Box::new(move |state| {
+            Box::pin(enc!((sender) async move {
+                tracing::debug!("ICE gathering state changed: {}", state);
+                if state == RTCIceGathererState::Complete {
+                    let _ = sender.send(());
+                }
+            }))
+        })));
     }
 
     // Hooks
-    pub async fn on_ice_candidate(&mut self, f: OnIceCandidateFn) {
-        self.on_ice_candidate_fn = Arc::new(f);
+    pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
+        let mut callback = self.on_ice_candidate_fn.lock().await;
+        *callback = f;
     }
 
-    pub async fn on_negotiation_needed(&mut self, f: OnNegotiationNeededFn) {
-        self.on_negotiation_needed_fn = Arc::new(f);
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededFn) {
+        let mut callback = self.on_negotiation_needed_fn.lock().await;
+        *callback = f;
     }
 
     pub async fn on_track(&mut self, f: OnTrackFn) {
-        self.on_track_fn = Arc::new(f);
+        let mut callback = self.on_track_fn.lock().await;
+        *callback = f;
     }
 }
