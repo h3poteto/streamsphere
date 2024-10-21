@@ -1,13 +1,16 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use enclose::enc;
 use tokio::sync::oneshot;
+use tokio::time::sleep;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::{track_local::track_local_static_rtp::TrackLocalStaticRTP, track_remote::TrackRemote},
 };
 
+use crate::buffer::JitterBuffer;
 use crate::transport;
 
 #[derive(Clone)]
@@ -58,6 +61,7 @@ impl MediaTrack {
             track.payload_type(),
             track.codec().capability.mime_type
         );
+        let mut jitter_buffer = JitterBuffer::new(Duration::from_millis(10));
 
         while let Ok((rtp, _attr)) = track.read_rtp().await {
             tracing::trace!(
@@ -67,8 +71,13 @@ impl MediaTrack {
                 rtp.header.sequence_number,
                 rtp.header.timestamp
             );
-            if let Err(e) = local_track.write_rtp(&rtp).await {
-                tracing::error!("failed to write rtp: {}", e);
+
+            jitter_buffer.add_packet(rtp);
+
+            if let Some(packet) = jitter_buffer.next_packet() {
+                if let Err(e) = local_track.write_rtp(&packet).await {
+                    tracing::error!("failed to write rtp: {}", e);
+                }
             }
         }
 
