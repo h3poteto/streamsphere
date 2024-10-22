@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use enclose::enc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
@@ -148,6 +149,7 @@ impl Subscriber {
         mime_type: String,
     ) {
         let media_type = detect_mime_type(mime_type);
+        let start_timestamp = Utc::now();
 
         while let Ok((rtcp_packets, attr)) = rtp_sender.read_rtcp().await {
             for rtcp in rtcp_packets.into_iter() {
@@ -178,17 +180,21 @@ impl Subscriber {
                         }
                         FORMAT_REMB => {
                             if let Some(remb) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::receiver_estimated_maximum_bitrate::ReceiverEstimatedMaximumBitrate>() {
-                                // Min bitrate is 1Mbpsbps if it is video.
+
                                 let mut remb = remb.clone();
-                                match media_type {
-                                    MediaType::Video => {
-                                        if remb.bitrate < 1024000.0 {
-                                            remb.bitrate = 1024000.0;
+                                let diff = Utc::now() - start_timestamp;
+                                if diff.num_seconds() < 60 {
+                                    // Min bitrate is 1Mbpsbps if it is video and first 1min.
+                                    match media_type {
+                                        MediaType::Video => {
+                                            if remb.bitrate < 1024000.0 {
+                                                remb.bitrate = 1024000.0;
+                                            }
                                         }
-                                    }
-                                    MediaType::Audio => {
-                                        if remb.bitrate < 64000.0 {
-                                            remb.bitrate = 640000.0
+                                        MediaType::Audio => {
+                                            if remb.bitrate < 64000.0 {
+                                                remb.bitrate = 640000.0
+                                            }
                                         }
                                     }
                                 }
