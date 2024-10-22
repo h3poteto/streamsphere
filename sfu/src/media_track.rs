@@ -94,3 +94,16 @@ impl MediaTrack {
         );
     }
 }
+
+pub(crate) fn detect_mime_type(mime_type: String) -> MediaType {
+    if mime_type.contains("video") || mime_type.contains("Video") {
+        MediaType::Video
+    } else {
+        MediaType::Audio
+    }
+}
+
+pub(crate) enum MediaType {
+    Video,
+    Audio,
+}

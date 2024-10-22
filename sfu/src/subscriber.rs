@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use enclose::enc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
+use webrtc::rtcp::header::FORMAT_REMB;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
     peer_connection::{
@@ -17,6 +19,7 @@ use webrtc::{
     track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
+use crate::media_track::{detect_mime_type, MediaType};
 use crate::{
     error::{Error, SubscriberErrorKind},
     media_track::MediaTrack,
@@ -119,6 +122,7 @@ impl Subscriber {
             media_track.track.id(),
             media_track.track.stream_id(),
         );
+        let mime_type = media_track.track.codec().capability.mime_type;
 
         let local_track = Arc::new(local_track);
         let cloned_track = local_track.clone();
@@ -127,7 +131,7 @@ impl Subscriber {
         // TODO: when peer connection has been closed, remove track using rtp_sender.
 
         tokio::spawn(enc!((rtp_sender, publisher_rtcp_sender) async move {
-            Self::rtcp_event_loop(rtp_sender, publisher_rtcp_sender).await;
+            Self::rtcp_event_loop(rtp_sender, publisher_rtcp_sender, mime_type).await;
         }));
 
         let rtp_buffer = media_track.rtp_sender.clone();
@@ -142,7 +146,11 @@ impl Subscriber {
     pub async fn rtcp_event_loop(
         rtp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
+        mime_type: String,
     ) {
+        let media_type = detect_mime_type(mime_type);
+        let start_timestamp = Utc::now();
+
         while let Ok((rtcp_packets, attr)) = rtp_sender.read_rtcp().await {
             for rtcp in rtcp_packets.into_iter() {
                 tracing::trace!("Receive RTCP rtcp={:#?}, attr={:#?}", rtcp, attr);
@@ -154,7 +162,10 @@ impl Subscriber {
                             .as_any()
                             .downcast_ref::<rtcp::receiver_report::ReceiverReport>() {
                                 let rr = rr.clone();
-                                tracing::debug!("Receive RTCP ReceiverReport: {:#?}", rr);
+                                match publisher_rtcp_sender.send(Box::new(rr)) {
+                                    Ok(_) => tracing::trace!("send rtcp: rr"),
+                                    Err(err) => tracing::error!("failed to send rtcp rr: {}", err)
+                                }
                             }
                     }
                     PacketType::PayloadSpecificFeedback => match header.count {
@@ -162,8 +173,35 @@ impl Subscriber {
                             if let Some(pli) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>() {
                                 let pli = pli.clone();
                                 match publisher_rtcp_sender.send(Box::new(pli)) {
-                                    Ok(_) => tracing::trace!("send rtcp"),
-                                    Err(err) => tracing::error!("failed to send rtcp: {}", err)
+                                    Ok(_) => tracing::trace!("send rtcp: pli"),
+                                    Err(err) => tracing::error!("failed to send rtcp pli: {}", err)
+                                }
+                            }
+                        }
+                        FORMAT_REMB => {
+                            if let Some(remb) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::receiver_estimated_maximum_bitrate::ReceiverEstimatedMaximumBitrate>() {
+
+                                let mut remb = remb.clone();
+                                let diff = Utc::now() - start_timestamp;
+                                if diff.num_seconds() < 60 {
+                                    // Min bitrate is 1Mbpsbps if it is video and first 1min.
+                                    match media_type {
+                                        MediaType::Video => {
+                                            if remb.bitrate < 1024000.0 {
+                                                remb.bitrate = 1024000.0;
+                                            }
+                                        }
+                                        MediaType::Audio => {
+                                            if remb.bitrate < 64000.0 {
+                                                remb.bitrate = 640000.0
+                                            }
+                                        }
+                                    }
+                                }
+
+                                match publisher_rtcp_sender.send(Box::new(remb)) {
+                                    Ok(_) => tracing::trace!("send rtcp: remb"),
+                                    Err(err) => tracing::error!("failed to send rtcp remb: {}", err)
                                 }
                             }
                         }
