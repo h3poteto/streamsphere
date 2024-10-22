@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
+use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
     peer_connection::{
         offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
@@ -11,7 +12,9 @@ use webrtc::{
         self,
         header::{PacketType, FORMAT_PLI},
     },
+    rtp::packet::Packet,
     rtp_transceiver::rtp_sender::RTCRtpSender,
+    track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
 use crate::{
@@ -110,11 +113,27 @@ impl Subscriber {
 
     async fn subscribe_track(&self, media_track: Arc<MediaTrack>) -> Result<(), Error> {
         let publisher_rtcp_sender = media_track.rtcp_sender.clone();
-        let local_track = media_track.track.clone();
+        let track_id = media_track.track.id();
+        let local_track = TrackLocalStaticRTP::new(
+            media_track.track.codec().capability,
+            media_track.track.id(),
+            media_track.track.stream_id(),
+        );
+
+        let local_track = Arc::new(local_track);
+        let cloned_track = local_track.clone();
         let rtp_sender = self.transport.add_track(local_track).await?;
+
+        // TODO: when peer connection has been closed, remove track using rtp_sender.
 
         tokio::spawn(enc!((rtp_sender, publisher_rtcp_sender) async move {
             Self::rtcp_event_loop(rtp_sender, publisher_rtcp_sender).await;
+        }));
+
+        let rtp_buffer = media_track.rtp_sender.clone();
+        tokio::spawn(enc!((cloned_track, rtp_buffer) async move{
+            let receiver = rtp_buffer.subscribe();
+            Self::rtp_event_loop(track_id, cloned_track, receiver).await;
         }));
 
         Ok(())
@@ -135,10 +154,7 @@ impl Subscriber {
                             .as_any()
                             .downcast_ref::<rtcp::receiver_report::ReceiverReport>() {
                                 let rr = rr.clone();
-                                match publisher_rtcp_sender.send(Box::new(rr)) {
-                                    Ok(_) => tracing::trace!("send rtcp"),
-                                    Err(err) => tracing::error!("failed to send rtcp: {}", err)
-                                }
+                                tracing::debug!("Receive RTCP ReceiverReport: {:#?}", rr);
                             }
                     }
                     PacketType::PayloadSpecificFeedback => match header.count {
@@ -159,6 +175,38 @@ impl Subscriber {
         }
 
         tracing::debug!("Subscriber RTCP event loop finished");
+    }
+
+    pub async fn rtp_event_loop(
+        track_id: String,
+        local_track: Arc<TrackLocalStaticRTP>,
+        mut rtp_receiver: broadcast::Receiver<Packet>,
+    ) {
+        tracing::debug!("Subscriber RTP event loop has started for {}", track_id);
+
+        let mut curr_timestamp = 0;
+        let mut i = 0;
+
+        while let Ok(mut packet) = rtp_receiver.recv().await {
+            curr_timestamp += packet.header.timestamp;
+            packet.header.timestamp = curr_timestamp;
+            // Keep an increasing sequence number
+            packet.header.sequence_number = i;
+
+            tracing::trace!(
+                "Subscriber write RTP ssrc={} seq={} timestamp={}",
+                packet.header.ssrc,
+                packet.header.sequence_number,
+                packet.header.timestamp
+            );
+
+            if let Err(err) = local_track.write_rtp(&packet).await {
+                tracing::error!("Subscriber failed to write rtp: {}", err);
+            }
+            i += 1;
+        }
+
+        tracing::debug!("Subscriber RTP event loop has finished for {}", track_id);
     }
 
     pub fn close(&self) {
