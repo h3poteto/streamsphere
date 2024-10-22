@@ -318,14 +318,14 @@ impl Transport {
             })));
 
         let on_track = Arc::clone(&self.on_track_fn);
-        let sender = self.router_event_sender.clone();
+        let router_sender = self.router_event_sender.clone();
         let rtcp_sender = self.rtcp_sender_channel.clone();
         let published_sender = self.published_sender.clone();
-        peer.on_track(Box::new(enc!( (on_track, sender, rtcp_sender, published_sender)
+        peer.on_track(Box::new(enc!( (on_track, router_sender, rtcp_sender, published_sender)
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
                   transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, sender, rtcp_sender, published_sender) async move {
+                Box::pin(enc!( (on_track, router_sender, rtcp_sender, published_sender) async move {
                     let locked = on_track.lock().await;
                     let id = track.id();
                     let ssrc = track.ssrc();
@@ -335,13 +335,13 @@ impl Transport {
                         let _ = sender.send(id.clone());
                     }
                     let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
-                    let _ = sender.send(RouterEvent::TrackPublished(media_track));
+                    let _ = router_sender.send(RouterEvent::TrackPublished(media_track));
 
                     (locked)(track, receiver, transceiver);
 
                     // Keep this thread until closed, and send TrackRemove event
                     let _ = closed.await;
-                    let _ = sender.send(RouterEvent::TrackRemoved(id));
+                    let _ = router_sender.send(RouterEvent::TrackRemoved(id));
                 }))
             }
         )));
