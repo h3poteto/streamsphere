@@ -254,12 +254,14 @@ impl Transport {
             let stop_receiver = self.stop_receiver_channel.clone();
             tokio::spawn(async move {
                 tracing::info!("RTCP writer loop");
+                // TODO: we need to write RTCP to publisher PeerConnection not subscriber peer.
                 loop {
                     let mut rtcp_receiver = rtcp_receiver.lock().await;
                     let mut stop_receiver = stop_receiver.lock().await;
                     tokio::select! {
                         data = rtcp_receiver.recv() => {
                             if let Some(data) = data {
+                                tracing::debug!("write RTCP");
                                 if let Err(err) = pc.write_rtcp(&[data]).await {
                                     tracing::error!("Error writing RTCP: {}", err);
                                 }
