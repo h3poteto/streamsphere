@@ -201,18 +201,20 @@ impl Handler<ReceivedMessage> for WebSocket {
                 });
             }
             ReceivedMessage::Publish { track_id } => {
-                let published_receiver = self.publisher.published_receiver.clone();
                 let room = self.room.clone();
+                let publisher = self.publisher.clone();
                 actix::spawn(async move {
-                    while let Some(published_id) = published_receiver.lock().await.recv().await {
-                        if published_id == track_id {
-                            tracing::debug!("published a track: {}", published_id);
+                    match publisher.publish(track_id).await {
+                        Ok(id) => {
+                            tracing::debug!("published a track: {}", id);
                             room.get_peers(&address).iter().for_each(|peer| {
-                                let id = track_id.clone();
-                                peer.do_send(SendingMessage::Published { track_id: id });
+                                peer.do_send(SendingMessage::Published {
+                                    track_id: id.clone(),
+                                });
                             });
-                        } else {
-                            tracing::debug!("unknown track is published: {}", published_id);
+                        }
+                        Err(err) => {
+                            tracing::error!("{}", err);
                         }
                     }
                 });

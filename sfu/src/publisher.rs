@@ -1,6 +1,6 @@
-use crate::error::{Error, TransportErrorKind};
+use crate::error::{Error, PublisherErrorKind, TransportErrorKind};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -10,14 +10,13 @@ use crate::transport::Transport;
 pub struct Publisher {
     pub id: String,
     transport: Arc<Transport>,
-    pub published_receiver: Arc<Mutex<mpsc::UnboundedReceiver<String>>>,
+    published_receiver: Arc<Mutex<broadcast::Receiver<String>>>,
 }
 
 impl Publisher {
     pub async fn new(transport: Arc<Transport>) -> Arc<Publisher> {
         let id = Uuid::new_v4().to_string();
-        let (published_sender, published_receiver) = mpsc::unbounded_channel();
-        transport.set_published_sender(published_sender).await;
+        let published_receiver = transport.get_published_receiver();
         let publisher = Publisher {
             id,
             transport,
@@ -32,6 +31,19 @@ impl Publisher {
     ) -> Result<RTCSessionDescription, Error> {
         let answer = self.get_answer_for_offer(sdp).await?;
         Ok(answer)
+    }
+
+    pub async fn publish(&self, track_id: String) -> Result<String, Error> {
+        let receiver = self.published_receiver.clone();
+        while let Ok(published_id) = receiver.lock().await.recv().await {
+            if published_id == track_id {
+                return Ok(published_id);
+            }
+        }
+        Err(Error::new_publisher(
+            "Failed to get published track".to_string(),
+            PublisherErrorKind::TrackNotPublishedError,
+        ))
     }
 
     async fn get_answer_for_offer(
