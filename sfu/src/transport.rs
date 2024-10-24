@@ -7,7 +7,7 @@ use crate::{
 };
 use enclose::enc;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder},
@@ -51,7 +51,7 @@ pub struct Transport {
     ice_gathering_complete_sender: mpsc::UnboundedSender<()>,
     pub ice_gathering_complete_receiver: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
-    published_sender: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    published_sender: broadcast::Sender<String>,
 }
 
 impl Transport {
@@ -63,6 +63,7 @@ impl Transport {
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
         let (ice_sender, ice_receiver) = mpsc::unbounded_channel();
+        let (published_sender, _) = broadcast::channel(1024);
 
         let mut transport = Transport {
             id,
@@ -79,7 +80,7 @@ impl Transport {
             ice_gathering_complete_sender: ice_sender,
             ice_gathering_complete_receiver: Arc::new(Mutex::new(ice_receiver)),
             pending_candidates: Arc::new(Mutex::new(Vec::new())),
-            published_sender: Arc::new(Mutex::new(None)),
+            published_sender,
         };
 
         let _ = transport.build_transport().await;
@@ -88,9 +89,9 @@ impl Transport {
         transport
     }
 
-    pub(crate) async fn set_published_sender(&self, sender: mpsc::UnboundedSender<String>) {
-        let mut locked_sender = self.published_sender.lock().await;
-        *locked_sender = Some(sender);
+    pub(crate) fn get_published_receiver(&self) -> broadcast::Receiver<String> {
+        let subscriber = self.published_sender.subscribe();
+        subscriber
     }
 
     pub(crate) async fn set_remote_description(
@@ -330,10 +331,7 @@ impl Transport {
                     let id = track.id();
                     let ssrc = track.ssrc();
                     tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
-                    let locked_sender = published_sender.lock().await ;
-                    if let Some(sender) = &*locked_sender {
-                        let _ = sender.send(id.clone());
-                    }
+                    published_sender.send(id.clone()).expect("could not send published track id to publisher");
                     let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
                     let _ = router_sender.send(RouterEvent::TrackPublished(media_track));
 
