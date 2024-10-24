@@ -6,8 +6,8 @@ const peerConnectionConfig: RTCConfiguration = {
 };
 
 const offerOptions: RTCOfferOptions = {
-  offerToReceiveVideo: true,
   offerToReceiveAudio: false,
+  offerToReceiveVideo: false,
 };
 
 export default function Room() {
@@ -144,9 +144,14 @@ export default function Room() {
       if (localVideo.current) {
         localVideo.current.srcObject = stream;
       }
+
       stream.getTracks().forEach((track) => {
         console.log("adding track", track.id);
-        conn.current!.addTrack(track);
+        conn.current!.addTransceiver(track, {
+          direction: "sendonly",
+          streams: [stream],
+          sendEncodings: [{ maxBitrate: 5000000 }],
+        });
         const payload = {
           action: "Publish",
           trackId: track.id,
