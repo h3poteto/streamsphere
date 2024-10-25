@@ -47,6 +47,8 @@ export default function Room() {
       };
       ws.current?.send(JSON.stringify(ping));
     }, 10000);
+
+    startConn();
   };
 
   const onClose = () => {
@@ -109,7 +111,7 @@ export default function Room() {
     }
   };
 
-  const startConn = async () => {
+  const startConn = () => {
     const c = new RTCPeerConnection(peerConnectionConfig);
     setPeerConnection(c);
     c.onicecandidate = (event) => {
@@ -189,9 +191,6 @@ export default function Room() {
 
   return (
     <>
-      <button onClick={startConn} disabled={peerConnection !== undefined}>
-        Peer connection
-      </button>
       <button onClick={capture} disabled={!peerConnection}>
         Capture
       </button>
