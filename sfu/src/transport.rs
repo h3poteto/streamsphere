@@ -14,10 +14,7 @@ use webrtc::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
     },
     data_channel::{data_channel_init::RTCDataChannelInit, RTCDataChannel},
-    ice_transport::{
-        ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
-        ice_gatherer_state::RTCIceGathererState,
-    },
+    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
     interceptor::registry::Registry,
     peer_connection::{
         offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
@@ -51,8 +48,6 @@ pub struct Transport {
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
     on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
     on_track_fn: Arc<Mutex<OnTrackFn>>,
-    ice_gathering_complete_sender: mpsc::UnboundedSender<()>,
-    pub ice_gathering_complete_receiver: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
     published_sender: broadcast::Sender<String>,
 }
@@ -65,7 +60,6 @@ impl Transport {
         let id = Uuid::new_v4().to_string();
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
-        let (ice_sender, ice_receiver) = mpsc::unbounded_channel();
         let (published_sender, _) = broadcast::channel(1024);
 
         let mut transport = Transport {
@@ -80,8 +74,6 @@ impl Transport {
             on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
             on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
             on_track_fn: Arc::new(Mutex::new(Box::new(|_, _, _| {}))),
-            ice_gathering_complete_sender: ice_sender,
-            ice_gathering_complete_receiver: Arc::new(Mutex::new(ice_receiver)),
             pending_candidates: Arc::new(Mutex::new(Vec::new())),
             published_sender,
         };
@@ -168,7 +160,6 @@ impl Transport {
         Ok(answer)
     }
 
-    // TODO: we don't use this
     pub(crate) async fn gathering_complete_promise(&self) -> Result<mpsc::Receiver<()>, Error> {
         let peer = self.peer_connection.clone().ok_or(Error::new_transport(
             "PeerConnection does not exist".to_string(),
@@ -350,15 +341,11 @@ impl Transport {
             }
         )));
 
-        let sender = self.ice_gathering_complete_sender.clone();
-        peer.on_ice_gathering_state_change(enc!((sender) Box::new(move |state| {
-            Box::pin(enc!((sender) async move {
+        peer.on_ice_gathering_state_change(Box::new(move |state| {
+            Box::pin(async move {
                 tracing::debug!("ICE gathering state changed: {}", state);
-                if state == RTCIceGathererState::Complete {
-                    let _ = sender.send(());
-                }
-            }))
-        })));
+            })
+        }));
     }
 
     // Hooks
