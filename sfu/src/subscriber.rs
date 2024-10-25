@@ -183,12 +183,12 @@ impl Subscriber {
 
                                 let mut remb = remb.clone();
                                 let diff = Utc::now() - start_timestamp;
-                                if diff.num_seconds() < 60 {
-                                    // Min bitrate is 1Mbpsbps if it is video and first 1min.
+                                if diff.num_seconds() < 30 {
+                                    // Min bitrate is 128kbps if it is video and first 30seconds.
                                     match media_type {
                                         MediaType::Video => {
-                                            if remb.bitrate < 1024000.0 {
-                                                remb.bitrate = 1024000.0;
+                                            if remb.bitrate < 128000.0 {
+                                                remb.bitrate = 128000.0;
                                             }
                                         }
                                         MediaType::Audio => {
