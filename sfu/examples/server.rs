@@ -165,7 +165,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                 let publisher = self.publisher.clone();
                 actix::spawn(async move {
                     let answer = publisher
-                        .connect(sdp)
+                        .get_answer(sdp)
                         .await
                         .expect("failed to connect publishder");
 
