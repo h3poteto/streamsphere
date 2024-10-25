@@ -10,12 +10,15 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
-    api::{media_engine::MediaEngine, APIBuilder},
+    api::{
+        interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
+    },
     data_channel::{data_channel_init::RTCDataChannelInit, RTCDataChannel},
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_gatherer_state::RTCIceGathererState,
     },
+    interceptor::registry::Registry,
     peer_connection::{
         offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
         peer_connection_state::RTCPeerConnectionState,
@@ -238,9 +241,12 @@ impl Transport {
         let mut me = MediaEngine::default();
         media_engine::register_default_codecs(&mut me)?;
         media_engine::register_extensions(&mut me)?;
+        let mut registry = Registry::new();
+        registry = register_default_interceptors(registry, &mut me)?;
+
         let api = APIBuilder::new()
             .with_media_engine(me)
-            .with_setting_engine(self.config.setting_engine.clone())
+            .with_interceptor_registry(registry)
             .build();
 
         let peer_connection = api
