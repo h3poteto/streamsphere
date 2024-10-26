@@ -132,22 +132,21 @@ export default function Room() {
         localVideo.current.srcObject = stream
       }
 
-      stream.getTracks().forEach(async track => {
-        console.log('adding track', track.id)
-        const offer = await conn.current?.publish(track)
-
-        const offerPayload = {
-          action: 'Offer',
-          sdp: offer
-        }
-        ws.current?.send(JSON.stringify(offerPayload))
-
+      const ids = await conn.current!.publish(stream)
+      ids.forEach(id => {
         const payload = {
           action: 'Publish',
-          trackId: track.id
+          trackId: id
         }
         ws.current?.send(JSON.stringify(payload))
       })
+
+      const offer = await conn.current!.getOffer()
+      const offerPayload = {
+        action: 'Offer',
+        sdp: offer
+      }
+      ws.current?.send(JSON.stringify(offerPayload))
     } catch (e) {
       console.error(e)
     }

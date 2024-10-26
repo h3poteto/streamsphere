@@ -7,13 +7,11 @@ const offerOptions: RTCOfferOptions = {
 
 export class Transport extends EventEmitter {
   private _peerConnection: RTCPeerConnection
-  private readonly _stream: MediaStream
   private _queue: Array<RTCIceCandidateInit>
 
   constructor(config: RTCConfiguration) {
     super()
     this._peerConnection = new RTCPeerConnection(config)
-    this._stream = new MediaStream()
     this._queue = []
 
     this._peerConnection.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
@@ -30,13 +28,20 @@ export class Transport extends EventEmitter {
     }
   }
 
-  public async publish(track: MediaStreamTrack): Promise<RTCSessionDescriptionInit> {
-    this._peerConnection.addTransceiver(track, {
-      direction: 'sendonly',
-      streams: [this._stream],
-      sendEncodings: [{ maxBitrate: 5000000 }]
+  public async publish(stream: MediaStream): Promise<Array<string>> {
+    const trackIds = stream.getTracks().map(track => {
+      this._peerConnection.addTransceiver(track, {
+        direction: 'sendonly',
+        streams: [stream],
+        sendEncodings: [{ maxBitrate: 5000000 }]
+      })
+      return track.id
     })
 
+    return trackIds
+  }
+
+  public async getOffer(): Promise<RTCSessionDescriptionInit> {
     const offer = await this._peerConnection.createOffer(offerOptions)
     await this._peerConnection.setLocalDescription(offer)
     return offer
