@@ -25,7 +25,7 @@ impl Publisher {
         Arc::new(publisher)
     }
 
-    pub async fn connect(
+    pub async fn get_answer(
         &self,
         sdp: RTCSessionDescription,
     ) -> Result<RTCSessionDescription, Error> {

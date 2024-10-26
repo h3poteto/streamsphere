@@ -110,7 +110,17 @@ impl Actor for WebSocket {
     fn started(&mut self, ctx: &mut Self::Context) {
         tracing::info!("New WebSocket connection is started");
         let address = ctx.address();
-        self.room.add_user(address);
+        self.room.add_user(address.clone());
+        // let room = self.room.clone();
+        // tokio::spawn(async move {
+        //     let router = room.router.lock().await;
+        //     let ids = router.track_ids();
+        //     ids.iter().for_each(|id| {
+        //         address.do_send(SendingMessage::Published {
+        //             track_id: id.to_string(),
+        //         });
+        //     });
+        // });
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
@@ -165,7 +175,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                 let publisher = self.publisher.clone();
                 actix::spawn(async move {
                     let answer = publisher
-                        .connect(sdp)
+                        .get_answer(sdp)
                         .await
                         .expect("failed to connect publishder");
 
