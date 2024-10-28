@@ -17,7 +17,7 @@ pub struct MediaTrack {
     _rtp_receiver: Arc<RTCRtpReceiver>,
     _rtp_transceiver: Arc<RTCRtpTransceiver>,
     pub rtcp_sender: Arc<transport::RtcpSender>,
-    pub rtp_sender: Arc<broadcast::Sender<Packet>>,
+    pub rtp_sender: broadcast::Sender<Packet>,
 }
 
 impl MediaTrack {
@@ -37,7 +37,7 @@ impl MediaTrack {
             let _ = closed_sender.send(true);
         }));
 
-        let rtp_sender = Arc::new(rtp_sender);
+        tracing::trace!("MediaTrack {} is created", id);
 
         (
             Self {
@@ -86,6 +86,10 @@ impl MediaTrack {
             }
         }
 
+        // When the track is finished, we should notify the subscriber
+        // Subscriber should stop rtp_event_loop and rtcp_event_loop after it.
+        drop(rtp_sender);
+
         tracing::debug!(
             "MediaTrack RTP event loop has finished for {}, {}: {}",
             track_id,
@@ -106,4 +110,10 @@ pub(crate) fn detect_mime_type(mime_type: String) -> MediaType {
 pub(crate) enum MediaType {
     Video,
     Audio,
+}
+
+impl Drop for MediaTrack {
+    fn drop(&mut self) {
+        tracing::trace!("MediaTrack {} is dropped", self.id);
+    }
 }

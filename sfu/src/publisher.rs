@@ -22,6 +22,9 @@ impl Publisher {
             transport,
             published_receiver: Arc::new(Mutex::new(published_receiver)),
         };
+
+        tracing::trace!("Publisher {} is created", publisher.id);
+
         Arc::new(publisher)
     }
 
@@ -61,5 +64,15 @@ impl Publisher {
                 TransportErrorKind::LocalDescriptionError,
             )),
         }
+    }
+
+    pub fn close(&self) {
+        // dummy
+    }
+}
+
+impl Drop for Publisher {
+    fn drop(&mut self) {
+        tracing::trace!("Publisher {} is dropped", self.id);
     }
 }

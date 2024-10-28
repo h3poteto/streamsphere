@@ -81,6 +81,8 @@ impl Transport {
         let _ = transport.build_transport().await;
         transport.ice_state_hooks().await;
 
+        tracing::trace!("Transport {} is created", transport.id);
+
         transport
     }
 
@@ -201,6 +203,16 @@ impl Transport {
         Ok(res)
     }
 
+    pub(crate) async fn remove_track(&self, sender: &Arc<RTCRtpSender>) -> Result<(), Error> {
+        let peer = self.peer_connection.clone().ok_or(Error::new_transport(
+            "PeerConnection does not exist".to_string(),
+            TransportErrorKind::PeerConnectionError,
+        ))?;
+
+        let res = peer.remove_track(sender).await?;
+        Ok(res)
+    }
+
     pub(crate) async fn create_data_channel(
         &self,
         label: &str,
@@ -215,11 +227,11 @@ impl Transport {
         Ok(res)
     }
 
-    pub async fn close(self) -> Result<(), Error> {
+    pub async fn close(&self) -> Result<(), Error> {
         if let Err(err) = self.stop_sender_channel.lock().await.send(()) {
             tracing::error!("failed to stop rtcp writer loop: {}", err);
         }
-        match self.peer_connection {
+        match &self.peer_connection {
             Some(peer) => {
                 peer.close().await?;
                 Ok(())
@@ -362,5 +374,11 @@ impl Transport {
     pub async fn on_track(&mut self, f: OnTrackFn) {
         let mut callback = self.on_track_fn.lock().await;
         *callback = f;
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        tracing::trace!("Transport {} is dropped", self.id);
     }
 }
