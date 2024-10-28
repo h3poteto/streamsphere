@@ -126,7 +126,12 @@ impl Actor for WebSocket {
     fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::info!("The WebSocket connection is stopped");
         let address = ctx.address();
-        // TODO: clean up
+        self.subscriber.close();
+        self.publisher.close();
+        let transport = self.transport.clone();
+        actix::spawn(async move {
+            transport.close().await.expect("failed to close transport");
+        });
         self.room.remove_user(address);
     }
 }

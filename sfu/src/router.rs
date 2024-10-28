@@ -27,6 +27,8 @@ impl Router {
             router_event_sender: tx,
         };
 
+        tracing::trace!("Router {} is created", id);
+
         let router = Arc::new(Mutex::new(r));
         let copied = Arc::clone(&router);
         tokio::spawn(async move {
@@ -96,4 +98,10 @@ pub enum RouterEvent {
     SubscriberRemoved(String),
     GetMediaTrack(String, oneshot::Sender<Option<Arc<MediaTrack>>>),
     Closed,
+}
+
+impl Drop for Router {
+    fn drop(&mut self) {
+        tracing::trace!("Router {} is dropped", self.id);
+    }
 }
