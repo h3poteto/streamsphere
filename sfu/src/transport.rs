@@ -250,6 +250,7 @@ impl Transport {
         let api = APIBuilder::new()
             .with_media_engine(me)
             .with_interceptor_registry(registry)
+            .with_setting_engine(self.config.setting_engine.clone())
             .build();
 
         let peer_connection = api
