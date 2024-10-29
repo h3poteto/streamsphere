@@ -192,12 +192,19 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::Subscribe { track_id } => {
                 let subscriber = self.subscriber.clone();
                 let transport = self.transport.clone();
-                let addr = address.clone();
+
                 actix::spawn(async move {
+                    let addr = address.clone();
+                    let addr2 = address.clone();
                     transport
                         .on_ice_candidate(Box::new(move |candidate| {
                             let init = candidate.to_json().expect("failed to parse candidate");
                             addr.do_send(SendingMessage::Ice { candidate: init });
+                        }))
+                        .await;
+                    transport
+                        .on_negotiation_needed(Box::new(move |offer| {
+                            addr2.do_send(SendingMessage::Offer { sdp: offer });
                         }))
                         .await;
                     let offer = subscriber
