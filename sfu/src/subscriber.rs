@@ -91,10 +91,11 @@ impl Subscriber {
             .transport
             .create_offer(Some(self.offer_options.clone()))
             .await?;
-
-        let mut gathering_complete = self.transport.gathering_complete_promise().await?;
         self.transport.set_local_description(offer).await?;
-        let _ = gathering_complete.recv().await;
+
+        let receiver = self.transport.ice_gathering_complete_receiver.clone();
+        let mut r = receiver.lock().await;
+        let _ = r.recv().await;
 
         match self.transport.local_description().await? {
             Some(offer) => Ok(offer),
