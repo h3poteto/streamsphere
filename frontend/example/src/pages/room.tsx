@@ -111,7 +111,7 @@ export default function Room() {
       ws.current?.send(JSON.stringify(payload))
     })
     t.on('icegatheringstatechange', event => {
-      console.debug('gathering change', event)
+      console.debug('gathering change', event.target.iceGatheringState)
     })
     t.on('track', event => {
       console.debug('track added', event)

@@ -2,8 +2,15 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use enclose::enc;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::APIBuilder;
+use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::header::FORMAT_REMB;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
@@ -19,42 +26,74 @@ use webrtc::{
     track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
+use crate::config::WebRTCTransportConfig;
 use crate::media_track::{detect_mime_type, MediaType};
+use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, Transport};
 use crate::{
     error::{Error, SubscriberErrorKind},
     media_track::MediaTrack,
     router::RouterEvent,
-    transport::{self, Transport},
 };
+use crate::{media_engine, transport};
 
 #[derive(Clone)]
-pub struct Subscriber {
+pub struct SubscribeTransport {
     pub id: String,
-    transport: Arc<Transport>,
+    peer_connection: Arc<RTCPeerConnection>,
+    pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     offer_options: RTCOfferOptions,
+    // For callback fn
+    on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
+    on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
 }
 
-impl Subscriber {
-    pub fn new(transport: Arc<Transport>) -> Arc<Subscriber> {
+impl SubscribeTransport {
+    pub async fn new(
+        router_event_sender: mpsc::UnboundedSender<RouterEvent>,
+        config: WebRTCTransportConfig,
+    ) -> Arc<Self> {
         let id = Uuid::new_v4().to_string();
-        let sender = transport.router_event_sender.clone();
-        let subscriber = Subscriber {
+
+        let mut me = MediaEngine::default();
+        media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
+        media_engine::register_extensions(&mut me).expect("failed to register default extensions");
+        let mut registry = Registry::new();
+        registry = register_default_interceptors(registry, &mut me)
+            .expect("failed to register interceptors");
+
+        let api = APIBuilder::new()
+            .with_media_engine(me)
+            .with_interceptor_registry(registry)
+            .with_setting_engine(config.setting_engine.clone())
+            .build();
+
+        let peer_connection = api
+            .new_peer_connection(config.configuration.clone())
+            .await
+            .expect("failed to create new peer connection");
+
+        let mut transport = Self {
             id,
-            transport,
-            router_event_sender: sender,
+            peer_connection: Arc::new(peer_connection),
+            router_event_sender,
             offer_options: RTCOfferOptions {
                 ice_restart: false,
                 voice_activity_detection: false,
             },
+            pending_candidates: Arc::new(Mutex::new(Vec::new())),
+            on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
         };
 
-        let subscriber = Arc::new(subscriber);
+        transport.ice_state_hooks().await;
+
+        let subscriber = Arc::new(transport);
         let copied = Arc::clone(&subscriber);
         let sender = subscriber.router_event_sender.clone();
         let _ = sender.send(RouterEvent::SubscriberAdded(copied));
 
-        tracing::trace!("Subscriber {} is created", subscriber.id);
+        tracing::trace!("SubscribeTransport {} is created", subscriber.id);
 
         subscriber
     }
@@ -77,26 +116,28 @@ impl Subscriber {
                     SubscriberErrorKind::TrackNotFoundError,
                 ))
             }
-            Some(track) => self.subscribe_track(track).await?,
-        }
+            Some(track) => {
+                self.subscribe_track(track).await?;
 
-        let offer = self.create_offer().await?;
-        Ok(offer)
+                let offer = self.create_offer().await?;
+                Ok(offer)
+            }
+        }
     }
 
     async fn create_offer(&self) -> Result<RTCSessionDescription, Error> {
         tracing::debug!("subscriber creates offer");
 
         let offer = self
-            .transport
+            .peer_connection
             .create_offer(Some(self.offer_options.clone()))
             .await?;
 
-        let mut gathering_complete = self.transport.gathering_complete_promise().await?;
-        self.transport.set_local_description(offer).await?;
+        let mut gathering_complete = self.peer_connection.gathering_complete_promise().await;
+        self.peer_connection.set_local_description(offer).await?;
         let _ = gathering_complete.recv().await;
 
-        match self.transport.local_description().await? {
+        match self.peer_connection.local_description().await {
             Some(offer) => Ok(offer),
             None => Err(Error::new_transport(
                 "Failed to set local description".to_string(),
@@ -107,10 +148,19 @@ impl Subscriber {
 
     pub async fn set_answer(&self, answer: RTCSessionDescription) -> Result<(), Error> {
         tracing::debug!("subscriber set answer");
-        self.transport.set_remote_description(answer).await?;
+        self.peer_connection.set_remote_description(answer).await?;
 
-        // Perhaps, we need to run add_ice_candidate for delay tricle ice, like
-        // https://github.com/billylindeman/switchboard/blob/94295c082be25f20e4144b29dfbb5a26c2c6c970/switchboard-sfu/src/sfu/peer.rs#L133
+        let pendings = self.pending_candidates.lock().await;
+        for candidate in pendings.iter() {
+            tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
+            if let Err(err) = self
+                .peer_connection
+                .add_ice_candidate(candidate.clone())
+                .await
+            {
+                tracing::error!("failed to add_ice_candidate: {}", err);
+            }
+        }
 
         Ok(())
     }
@@ -128,20 +178,21 @@ impl Subscriber {
         let local_track = Arc::new(local_track);
         let cloned_track = local_track.clone();
 
-        let rtcp_sender = self.transport.add_track(local_track).await?;
+        let rtcp_sender = self.peer_connection.add_track(local_track).await?;
         tokio::spawn(enc!((rtcp_sender, publisher_rtcp_sender) async move {
             Self::rtcp_event_loop(rtcp_sender, publisher_rtcp_sender, mime_type).await;
         }));
 
         let rtp_buffer = media_track.rtp_sender.clone();
-        let transport = self.transport.clone();
+        let peer = self.peer_connection.clone();
         tokio::spawn(enc!((cloned_track, rtp_buffer) async move{
             let receiver = rtp_buffer.subscribe();
             // We have to drop sender to receive close event when the track has been closed.
             drop(rtp_buffer);
+
             Self::rtp_event_loop(track_id, cloned_track, receiver).await;
             // Upstream track has been closed, so we should remove subscribed track from peer connection.
-            let _ = transport.remove_track(&rtcp_sender).await;
+            let _ = peer.remove_track(&rtcp_sender).await;
         }));
 
         Ok(())
@@ -262,15 +313,93 @@ impl Subscriber {
         tracing::debug!("Subscriber RTP event loop has finished for {}", track_id);
     }
 
-    pub fn close(&self) {
+    async fn ice_state_hooks(&mut self) {
+        let peer = self.peer_connection.clone();
+        let on_ice_candidate = Arc::clone(&self.on_ice_candidate_fn);
+
+        // This callback is called after initializing PeerConnection with ICE servers.
+        peer.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+            Box::pin({
+                let func = on_ice_candidate.clone();
+                async move {
+                    let locked = func.lock().await;
+                    if let Some(candidate) = candidate {
+                        tracing::info!("on ice candidate: {}", candidate);
+                        // Call on_ice_candidate_fn as callback.
+                        (locked)(candidate);
+                    }
+                }
+            })
+        }));
+
+        let downgraded_peer = Arc::downgrade(&peer);
+        let on_negotiation_needed = Arc::clone(&self.on_negotiation_needed_fn);
+        peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed) move || {
+                Box::pin(enc!( (downgraded_peer, on_negotiation_needed) async move {
+                    tracing::info!("on negotiation needed");
+                    let locked = on_negotiation_needed.lock().await;
+                    if let Some(pc) = downgraded_peer.upgrade() {
+                        if pc.connection_state() == RTCPeerConnectionState::Closed {
+                                return;
+                        }
+
+                        let offer = pc.create_offer(None).await.expect("could not create subscriber offer:");
+                        pc.set_local_description(offer).await.expect("could not set local description");
+                        let offer = pc.local_description().await.unwrap();
+
+                        tracing::info!("peer sending offer");
+                        (locked)(offer);
+                    }
+                }))
+            })));
+
+        peer.on_ice_gathering_state_change(Box::new(move |state| {
+            Box::pin(async move {
+                tracing::debug!("ICE gathering state changed: {}", state);
+            })
+        }));
+    }
+
+    // Hooks
+    pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
+        let mut callback = self.on_ice_candidate_fn.lock().await;
+        *callback = f;
+    }
+
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededFn) {
+        let mut callback = self.on_negotiation_needed_fn.lock().await;
+        *callback = f;
+    }
+
+    pub async fn close(&self) -> Result<(), Error> {
         let _ = self
             .router_event_sender
             .send(RouterEvent::SubscriberRemoved(self.id.clone()));
+
+        self.peer_connection.close().await?;
+        Ok(())
     }
 }
 
-impl Drop for Subscriber {
+impl Transport for SubscribeTransport {
+    async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
+        if let Some(_rd) = self.peer_connection.remote_description().await {
+            tracing::debug!("Adding ICE candidate for {:#?}", candidate);
+            let _ = self
+                .peer_connection
+                .add_ice_candidate(candidate.clone())
+                .await?;
+        } else {
+            tracing::debug!("Pending ICE candidate for {:#?}", candidate);
+            self.pending_candidates.lock().await.push(candidate.clone());
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for SubscribeTransport {
     fn drop(&mut self) {
-        tracing::trace!("Subscriber {} is dropped", self.id);
+        tracing::debug!("Subscriber {} is dropped", self.id);
     }
 }
