@@ -23,11 +23,6 @@ export default function Room() {
     if (router.query.room) {
       const r = router.query.room as string
       setRoom(r)
-      const w = new WebSocket(`ws://localhost:4000/socket?room=${r}`)
-      ws.current = w
-      ws.current.onopen = onOpen
-      ws.current.onclose = onClose
-      ws.current.onmessage = onMessage
     }
   }, [router.query.room])
 
@@ -42,8 +37,7 @@ export default function Room() {
       }
       ws.current?.send(JSON.stringify(ping))
     }, 10000)
-
-    startConn()
+    ws.current?.send(JSON.stringify({action: "Init"}))
   }
 
   const onClose = () => {
@@ -99,6 +93,14 @@ export default function Room() {
   }
 
   const startConn = () => {
+    // WebSocket
+    const w = new WebSocket(`ws://localhost:4000/socket?room=${room}`)
+    ws.current = w
+    ws.current.onopen = onOpen
+    ws.current.onclose = onClose
+    ws.current.onmessage = onMessage
+
+    // PeerConnection
     const t = new Transport(peerConnectionConfig)
     setTransport(t)
     t.on('icecandidate', event => {
@@ -154,6 +156,9 @@ export default function Room() {
 
   return (
     <>
+      <button onClick={startConn} disabled={transport !== undefined }>
+        Connection
+      </button>
       <button onClick={capture} disabled={!transport}>
         Capture
       </button>

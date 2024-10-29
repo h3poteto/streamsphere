@@ -111,16 +111,6 @@ impl Actor for WebSocket {
         tracing::info!("New WebSocket connection is started");
         let address = ctx.address();
         self.room.add_user(address.clone());
-        // let room = self.room.clone();
-        // tokio::spawn(async move {
-        //     let router = room.router.lock().await;
-        //     let ids = router.track_ids();
-        //     ids.iter().for_each(|id| {
-        //         address.do_send(SendingMessage::Published {
-        //             track_id: id.to_string(),
-        //         });
-        //     });
-        // });
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
@@ -166,6 +156,18 @@ impl Handler<ReceivedMessage> for WebSocket {
         match msg {
             ReceivedMessage::Ping => {
                 address.do_send(SendingMessage::Pong);
+            }
+            ReceivedMessage::Init => {
+                let room = self.room.clone();
+                tokio::spawn(async move {
+                    let router = room.router.lock().await;
+                    let ids = router.track_ids();
+                    ids.iter().for_each(|id| {
+                        address.do_send(SendingMessage::Published {
+                            track_id: id.to_string(),
+                        });
+                    });
+                });
             }
             ReceivedMessage::Ice { candidate } => {
                 let transport = self.transport.clone();
@@ -259,6 +261,8 @@ impl Handler<InternalMessage> for WebSocket {
 enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Ping,
+    #[serde(rename_all = "camelCase")]
+    Init,
     // Seems like client-side (JS) RTCIceCandidate struct is equal RTCIceCandidateInit.
     #[serde(rename_all = "camelCase")]
     Ice { candidate: RTCIceCandidateInit },
