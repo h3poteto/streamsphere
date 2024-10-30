@@ -12,6 +12,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::header::FORMAT_REMB;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
     peer_connection::{
@@ -56,7 +57,9 @@ impl SubscribeTransport {
         let id = Uuid::new_v4().to_string();
 
         let mut me = MediaEngine::default();
-        media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
+        me.register_default_codecs()
+            .expect("failed to register default codec");
+        // media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
         media_engine::register_extensions(&mut me).expect("failed to register default extensions");
         let mut registry = Registry::new();
         registry = register_default_interceptors(registry, &mut me)
@@ -179,8 +182,9 @@ impl SubscribeTransport {
         let cloned_track = local_track.clone();
 
         let rtcp_sender = self.peer_connection.add_track(local_track).await?;
+        let media_ssrc = media_track.track.ssrc();
         tokio::spawn(enc!((rtcp_sender, publisher_rtcp_sender) async move {
-            Self::rtcp_event_loop(rtcp_sender, publisher_rtcp_sender, mime_type).await;
+            Self::rtcp_event_loop(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc).await;
         }));
 
         let rtp_buffer = media_track.rtp_sender.clone();
@@ -202,6 +206,7 @@ impl SubscribeTransport {
         rtcp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
         mime_type: String,
+        media_ssrc: u32,
     ) {
         let media_type = detect_mime_type(mime_type);
         let start_timestamp = Utc::now();
@@ -215,19 +220,22 @@ impl SubscribeTransport {
                     PacketType::ReceiverReport => {
                         if let Some(rr) = rtcp
                             .as_any()
-                            .downcast_ref::<rtcp::receiver_report::ReceiverReport>() {
-                                let rr = rr.clone();
-                                match publisher_rtcp_sender.send(Box::new(rr)) {
-                                    Ok(_) => tracing::trace!("send rtcp: rr"),
-                                    Err(err) => tracing::error!("failed to send rtcp rr: {}", err)
-                                }
+                            .downcast_ref::<rtcp::receiver_report::ReceiverReport>()
+                        {
+                            let rr = rr.clone();
+                            match publisher_rtcp_sender.send(Box::new(rr)) {
+                                Ok(_) => tracing::trace!("send rtcp: rr"),
+                                Err(err) => tracing::error!("failed to send rtcp rr: {}", err),
                             }
+                        }
                     }
                     PacketType::PayloadSpecificFeedback => match header.count {
                         FORMAT_PLI => {
-                            if let Some(pli) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>() {
-                                let pli = pli.clone();
-                                match publisher_rtcp_sender.send(Box::new(pli)) {
+                            if let Some(_pli) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>() {
+                                match publisher_rtcp_sender.send(Box::new(PictureLossIndication {
+                                    sender_ssrc: 0,
+                                    media_ssrc,
+                                })) {
                                     Ok(_) => tracing::trace!("send rtcp: pli"),
                                     Err(err) => tracing::error!("failed to send rtcp pli: {}", err)
                                 }
@@ -277,6 +285,7 @@ impl SubscribeTransport {
     ) {
         tracing::debug!("Subscriber RTP event loop has started for {}", track_id);
 
+        // TODO: how to kill this loop when the subscriber has been dropped.
         let mut curr_timestamp = 0;
         let mut i = 0;
 

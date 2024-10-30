@@ -50,7 +50,9 @@ impl PublishTransport {
         let (published_sender, published_receiver) = broadcast::channel(1024);
 
         let mut me = MediaEngine::default();
-        media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
+        me.register_default_codecs()
+            .expect("failed to register default codec");
+        // media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
         media_engine::register_extensions(&mut me).expect("failed to register default extensions");
         let mut registry = Registry::new();
         registry = register_default_interceptors(registry, &mut me)

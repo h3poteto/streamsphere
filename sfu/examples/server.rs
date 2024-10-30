@@ -369,15 +369,15 @@ impl RoomOwner {
 }
 
 struct Room {
-    id: String,
+    _id: String,
     pub router: Arc<Mutex<streamsphere::router::Router>>,
     users: std::sync::Mutex<Vec<Addr<WebSocket>>>,
 }
 
 impl Room {
-    pub fn new(id: String, router: Arc<Mutex<streamsphere::router::Router>>) -> Self {
+    pub fn new(_id: String, router: Arc<Mutex<streamsphere::router::Router>>) -> Self {
         Self {
-            id,
+            _id,
             router,
             users: std::sync::Mutex::new(Vec::new()),
         }
