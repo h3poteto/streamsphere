@@ -1,7 +1,6 @@
 use crate::{
     config::WebRTCTransportConfig,
     error::{Error, PublisherErrorKind, TransportErrorKind},
-    media_engine,
     media_track::MediaTrack,
     router::RouterEvent,
     transport::{OnIceCandidateFn, OnTrackFn, RtcpReceiver, RtcpSender, Transport},
@@ -11,11 +10,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
-    api::{
-        interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
-    },
     ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
-    interceptor::registry::Registry,
     peer_connection::{sdp::session_description::RTCSessionDescription, RTCPeerConnection},
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::track_remote::TrackRemote,
@@ -49,25 +44,9 @@ impl PublishTransport {
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
         let (published_sender, published_receiver) = broadcast::channel(1024);
 
-        let mut me = MediaEngine::default();
-        me.register_default_codecs()
-            .expect("failed to register default codec");
-        // media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
-        media_engine::register_extensions(&mut me).expect("failed to register default extensions");
-        let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut me)
-            .expect("failed to register interceptors");
-
-        let api = APIBuilder::new()
-            .with_media_engine(me)
-            .with_interceptor_registry(registry)
-            .with_setting_engine(config.setting_engine())
-            .build();
-
-        let peer_connection = api
-            .new_peer_connection(config.configuration.clone())
+        let peer_connection = Self::generate_peer_connection(config)
             .await
-            .expect("failed to create new peer connection");
+            .expect("failed to generate peer connection");
 
         let mut transport = Self {
             id,

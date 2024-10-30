@@ -4,11 +4,7 @@ use chrono::Utc;
 use enclose::enc;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
-use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::header::FORMAT_REMB;
@@ -29,13 +25,13 @@ use webrtc::{
 
 use crate::config::WebRTCTransportConfig;
 use crate::media_track::{detect_mime_type, MediaType};
+use crate::transport;
 use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, Transport};
 use crate::{
     error::{Error, SubscriberErrorKind},
     media_track::MediaTrack,
     router::RouterEvent,
 };
-use crate::{media_engine, transport};
 
 #[derive(Clone)]
 pub struct SubscribeTransport {
@@ -59,25 +55,9 @@ impl SubscribeTransport {
     ) -> Arc<Self> {
         let id = Uuid::new_v4().to_string();
 
-        let mut me = MediaEngine::default();
-        me.register_default_codecs()
-            .expect("failed to register default codec");
-        // media_engine::register_default_codecs(&mut me).expect("failed to register default codecs");
-        media_engine::register_extensions(&mut me).expect("failed to register default extensions");
-        let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut me)
-            .expect("failed to register interceptors");
-
-        let api = APIBuilder::new()
-            .with_media_engine(me)
-            .with_interceptor_registry(registry)
-            .with_setting_engine(config.setting_engine())
-            .build();
-
-        let peer_connection = api
-            .new_peer_connection(config.configuration.clone())
+        let peer_connection = Self::generate_peer_connection(config)
             .await
-            .expect("failed to create new peer connection");
+            .expect("failed to generate peer connection");
 
         let (closed_sender, closed_receiver) = mpsc::unbounded_channel();
 
