@@ -61,7 +61,7 @@ impl PublishTransport {
         let api = APIBuilder::new()
             .with_media_engine(me)
             .with_interceptor_registry(registry)
-            .with_setting_engine(config.setting_engine.clone())
+            .with_setting_engine(config.setting_engine())
             .build();
 
         let peer_connection = api
