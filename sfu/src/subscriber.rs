@@ -295,7 +295,6 @@ impl SubscribeTransport {
         tracing::debug!("Subscriber RTP event loop has started for {}", track_id);
 
         let mut curr_timestamp = 0;
-        let mut i = 0;
 
         loop {
             let mut closed = subscriber_closed.lock().await;
@@ -308,8 +307,6 @@ impl SubscribeTransport {
                         Ok(mut packet) => {
                             curr_timestamp += packet.header.timestamp;
                             packet.header.timestamp = curr_timestamp;
-                            // Keep an increasing sequence number
-                            packet.header.sequence_number = i;
 
                             tracing::trace!(
                                 "Subscriber write RTP ssrc={} seq={} timestamp={}",
@@ -321,7 +318,6 @@ impl SubscribeTransport {
                             if let Err(err) = local_track.write_rtp(&packet).await {
                                 tracing::error!("Subscriber failed to write rtp: {}", err);
                             }
-                            i += 1;
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             break;
