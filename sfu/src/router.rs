@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    config::WebRTCTransportConfig, media_track::MediaTrack, publisher::PublishTransport,
+    config::{MediaConfig, WebRTCTransportConfig},
+    media_track::MediaTrack,
+    publisher::PublishTransport,
     subscriber::SubscribeTransport,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -13,10 +15,11 @@ pub struct Router {
     tracks: HashMap<String, Arc<MediaTrack>>,
     subscribers: HashMap<String, Arc<SubscribeTransport>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
+    media_config: MediaConfig,
 }
 
 impl Router {
-    pub fn new() -> Arc<Mutex<Router>> {
+    pub fn new(media_config: MediaConfig) -> Arc<Mutex<Router>> {
         let id = Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel::<RouterEvent>();
 
@@ -25,6 +28,7 @@ impl Router {
             tracks: HashMap::new(),
             subscribers: HashMap::new(),
             router_event_sender: tx,
+            media_config,
         };
 
         tracing::trace!("Router {} is created", id);
@@ -47,7 +51,7 @@ impl Router {
         transport_config: WebRTCTransportConfig,
     ) -> PublishTransport {
         let tx = self.router_event_sender.clone();
-        PublishTransport::new(tx, transport_config).await
+        PublishTransport::new(tx, self.media_config.clone(), transport_config).await
     }
 
     pub async fn create_subscribe_transport(
@@ -55,7 +59,7 @@ impl Router {
         transport_config: WebRTCTransportConfig,
     ) -> Arc<SubscribeTransport> {
         let tx = self.router_event_sender.clone();
-        SubscribeTransport::new(tx, transport_config).await
+        SubscribeTransport::new(tx, self.media_config.clone(), transport_config).await
     }
 
     pub async fn router_event_loop(
