@@ -47,6 +47,9 @@ pub struct SubscribeTransport {
     // For callback fn
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
     on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
+    // rtp event
+    closed_sender: Arc<mpsc::UnboundedSender<bool>>,
+    closed_receiver: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
 }
 
 impl SubscribeTransport {
@@ -76,6 +79,8 @@ impl SubscribeTransport {
             .await
             .expect("failed to create new peer connection");
 
+        let (closed_sender, closed_receiver) = mpsc::unbounded_channel();
+
         let mut transport = Self {
             id,
             peer_connection: Arc::new(peer_connection),
@@ -87,6 +92,8 @@ impl SubscribeTransport {
             pending_candidates: Arc::new(Mutex::new(Vec::new())),
             on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
             on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
+            closed_sender: Arc::new(closed_sender),
+            closed_receiver: Arc::new(Mutex::new(closed_receiver)),
         };
 
         transport.ice_state_hooks().await;
@@ -189,12 +196,13 @@ impl SubscribeTransport {
 
         let rtp_buffer = media_track.rtp_sender.clone();
         let peer = self.peer_connection.clone();
+        let closed_receiver = self.closed_receiver.clone();
         tokio::spawn(enc!((cloned_track, rtp_buffer) async move{
             let receiver = rtp_buffer.subscribe();
             // We have to drop sender to receive close event when the track has been closed.
             drop(rtp_buffer);
 
-            Self::rtp_event_loop(track_id, cloned_track, receiver).await;
+            Self::rtp_event_loop(track_id, cloned_track, receiver, closed_receiver).await;
             // Upstream track has been closed, so we should remove subscribed track from peer connection.
             let _ = peer.remove_track(&rtcp_sender).await;
         }));
@@ -282,39 +290,48 @@ impl SubscribeTransport {
         track_id: String,
         local_track: Arc<TrackLocalStaticRTP>,
         mut rtp_receiver: broadcast::Receiver<Packet>,
+        subscriber_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     ) {
         tracing::debug!("Subscriber RTP event loop has started for {}", track_id);
 
-        // TODO: how to kill this loop when the subscriber has been dropped.
         let mut curr_timestamp = 0;
         let mut i = 0;
 
         loop {
-            match rtp_receiver.recv().await {
-                Ok(mut packet) => {
-                    curr_timestamp += packet.header.timestamp;
-                    packet.header.timestamp = curr_timestamp;
-                    // Keep an increasing sequence number
-                    packet.header.sequence_number = i;
+            let mut closed = subscriber_closed.lock().await;
+            tokio::select! {
+                _closed = closed.recv() => {
+                    break;
+                }
+                res = rtp_receiver.recv() => {
+                    match res {
+                        Ok(mut packet) => {
+                            curr_timestamp += packet.header.timestamp;
+                            packet.header.timestamp = curr_timestamp;
+                            // Keep an increasing sequence number
+                            packet.header.sequence_number = i;
 
-                    tracing::trace!(
-                        "Subscriber write RTP ssrc={} seq={} timestamp={}",
-                        packet.header.ssrc,
-                        packet.header.sequence_number,
-                        packet.header.timestamp
-                    );
+                            tracing::trace!(
+                                "Subscriber write RTP ssrc={} seq={} timestamp={}",
+                                packet.header.ssrc,
+                                packet.header.sequence_number,
+                                packet.header.timestamp
+                            );
 
-                    if let Err(err) = local_track.write_rtp(&packet).await {
-                        tracing::error!("Subscriber failed to write rtp: {}", err);
+                            if let Err(err) = local_track.write_rtp(&packet).await {
+                                tracing::error!("Subscriber failed to write rtp: {}", err);
+                            }
+                            i += 1;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
+                        Err(err) => {
+                            tracing::error!("Subscriber failed to receive rtp: {}", err);
+                            break;
+                        }
                     }
-                    i += 1;
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-                Err(err) => {
-                    tracing::error!("Subscriber failed to receive rtp: {}", err);
-                    break;
+
                 }
             }
         }
@@ -384,6 +401,8 @@ impl SubscribeTransport {
         let _ = self
             .router_event_sender
             .send(RouterEvent::SubscriberRemoved(self.id.clone()));
+
+        self.closed_sender.send(true).unwrap();
 
         self.peer_connection.close().await?;
         Ok(())
