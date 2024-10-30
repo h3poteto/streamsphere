@@ -30,9 +30,10 @@ export class Transport extends EventEmitter {
 
   public async publish(stream: MediaStream): Promise<Array<string>> {
     const trackIds = stream.getTracks().map(track => {
+//      this._peerConnection.addTrack(track, stream)
       this._peerConnection.addTransceiver(track, {
         direction: 'sendonly',
-        streams: [stream],
+        streams: [],
         sendEncodings: [{ maxBitrate: 5000000 }]
       })
       return track.id

@@ -7,6 +7,7 @@ use actix_web::web::{Data, Query};
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
+use streamsphere::transport::Transport;
 use tokio::sync::Mutex;
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -79,9 +80,8 @@ async fn socket(
 
 struct WebSocket {
     room: Arc<Room>,
-    transport: Arc<streamsphere::transport::Transport>,
-    publisher: Arc<streamsphere::publisher::Publisher>,
-    subscriber: Arc<streamsphere::subscriber::Subscriber>,
+    publisher: Arc<streamsphere::publisher::PublishTransport>,
+    subscriber: Arc<streamsphere::subscriber::SubscribeTransport>,
 }
 
 impl WebSocket {
@@ -91,14 +91,11 @@ impl WebSocket {
         let r = room.router.clone();
         let router = r.lock().await;
         let config = streamsphere::config::WebRTCTransportConfig::default();
-        let transport = router.create_transport(config).await;
-        let arc = Arc::new(transport);
-        let publisher = streamsphere::publisher::Publisher::new(arc.clone()).await;
-        let subscriber = streamsphere::subscriber::Subscriber::new(arc.clone());
+        let publisher = router.create_publish_transport(config.clone()).await;
+        let subscriber = router.create_subscribe_transport(config).await;
         Self {
             room,
-            transport: arc,
-            publisher,
+            publisher: Arc::new(publisher),
             subscriber,
         }
     }
@@ -116,11 +113,14 @@ impl Actor for WebSocket {
     fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::info!("The WebSocket connection is stopped");
         let address = ctx.address();
-        self.subscriber.close();
-        self.publisher.close();
-        let transport = self.transport.clone();
+        let subscriber = self.subscriber.clone();
+        let publisher = self.publisher.clone();
         actix::spawn(async move {
-            transport.close().await.expect("failed to close transport");
+            subscriber
+                .close()
+                .await
+                .expect("failed to close subscriber");
+            publisher.close().await.expect("failed to close publisher");
         });
         self.room.remove_user(address);
     }
@@ -157,11 +157,39 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::Ping => {
                 address.do_send(SendingMessage::Pong);
             }
-            ReceivedMessage::Init => {
+            ReceivedMessage::PublisherInit => {
+                let publisher = self.publisher.clone();
+                tokio::spawn(async move {
+                    let addr = address.clone();
+                    publisher
+                        .on_ice_candidate(Box::new(move |candidate| {
+                            let init = candidate.to_json().expect("failed to parse candidate");
+                            addr.do_send(SendingMessage::PublisherIce { candidate: init });
+                        }))
+                        .await;
+                });
+            }
+            ReceivedMessage::SubscriberInit => {
+                let subscriber = self.subscriber.clone();
                 let room = self.room.clone();
                 tokio::spawn(async move {
+                    let addr = address.clone();
+                    let addr2 = address.clone();
+                    subscriber
+                        .on_ice_candidate(Box::new(move |candidate| {
+                            let init = candidate.to_json().expect("failed to parse candidate");
+                            addr.do_send(SendingMessage::SubscriberIce { candidate: init });
+                        }))
+                        .await;
+                    subscriber
+                        .on_negotiation_needed(Box::new(move |offer| {
+                            addr2.do_send(SendingMessage::Offer { sdp: offer });
+                        }))
+                        .await;
+
                     let router = room.router.lock().await;
                     let ids = router.track_ids();
+                    tracing::info!("router track ids {:#?}", ids);
                     ids.iter().for_each(|id| {
                         address.do_send(SendingMessage::Published {
                             track_id: id.to_string(),
@@ -169,10 +197,21 @@ impl Handler<ReceivedMessage> for WebSocket {
                     });
                 });
             }
-            ReceivedMessage::Ice { candidate } => {
-                let transport = self.transport.clone();
+
+            ReceivedMessage::RequestPublish => address.do_send(SendingMessage::StartAsPublisher),
+            ReceivedMessage::PublisherIce { candidate } => {
+                let publisher = self.publisher.clone();
                 actix::spawn(async move {
-                    let _ = transport
+                    let _ = publisher
+                        .add_ice_candidate(candidate)
+                        .await
+                        .expect("failed to add ICE candidate");
+                });
+            }
+            ReceivedMessage::SubscriberIce { candidate } => {
+                let subscriber = self.subscriber.clone();
+                actix::spawn(async move {
+                    let _ = subscriber
                         .add_ice_candidate(candidate)
                         .await
                         .expect("failed to add ICE candidate");
@@ -191,22 +230,8 @@ impl Handler<ReceivedMessage> for WebSocket {
             }
             ReceivedMessage::Subscribe { track_id } => {
                 let subscriber = self.subscriber.clone();
-                let transport = self.transport.clone();
 
                 actix::spawn(async move {
-                    let addr = address.clone();
-                    let addr2 = address.clone();
-                    transport
-                        .on_ice_candidate(Box::new(move |candidate| {
-                            let init = candidate.to_json().expect("failed to parse candidate");
-                            addr.do_send(SendingMessage::Ice { candidate: init });
-                        }))
-                        .await;
-                    transport
-                        .on_negotiation_needed(Box::new(move |offer| {
-                            addr2.do_send(SendingMessage::Offer { sdp: offer });
-                        }))
-                        .await;
                     let offer = subscriber
                         .subscribe(track_id)
                         .await
@@ -231,6 +256,9 @@ impl Handler<ReceivedMessage> for WebSocket {
                     match publisher.publish(track_id).await {
                         Ok(id) => {
                             tracing::debug!("published a track: {}", id);
+                            // address.do_send(SendingMessage::Published {
+                            //     track_id: id.clone(),
+                            // });
                             room.get_peers(&address).iter().for_each(|peer| {
                                 peer.do_send(SendingMessage::Published {
                                     track_id: id.clone(),
@@ -269,10 +297,16 @@ enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Ping,
     #[serde(rename_all = "camelCase")]
-    Init,
+    PublisherInit,
+    #[serde(rename_all = "camelCase")]
+    SubscriberInit,
+    #[serde(rename_all = "camelCase")]
+    RequestPublish,
     // Seems like client-side (JS) RTCIceCandidate struct is equal RTCIceCandidateInit.
     #[serde(rename_all = "camelCase")]
-    Ice { candidate: RTCIceCandidateInit },
+    PublisherIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    SubscriberIce { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
     Offer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
@@ -290,11 +324,15 @@ enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     Pong,
     #[serde(rename_all = "camelCase")]
+    StartAsPublisher,
+    #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
     Offer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
-    Ice { candidate: RTCIceCandidateInit },
+    PublisherIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    SubscriberIce { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
     Published { track_id: String },
 }
@@ -331,15 +369,15 @@ impl RoomOwner {
 }
 
 struct Room {
-    id: String,
+    _id: String,
     pub router: Arc<Mutex<streamsphere::router::Router>>,
     users: std::sync::Mutex<Vec<Addr<WebSocket>>>,
 }
 
 impl Room {
-    pub fn new(id: String, router: Arc<Mutex<streamsphere::router::Router>>) -> Self {
+    pub fn new(_id: String, router: Arc<Mutex<streamsphere::router::Router>>) -> Self {
         Self {
-            id,
+            _id,
             router,
             users: std::sync::Mutex::new(Vec::new()),
         }
