@@ -1,5 +1,5 @@
 use crate::{
-    config::WebRTCTransportConfig,
+    config::{MediaConfig, WebRTCTransportConfig},
     error::{Error, PublisherErrorKind, TransportErrorKind},
     media_track::MediaTrack,
     router::RouterEvent,
@@ -37,16 +37,17 @@ pub struct PublishTransport {
 impl PublishTransport {
     pub async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
-        config: WebRTCTransportConfig,
+        media_config: MediaConfig,
+        transport_config: WebRTCTransportConfig,
     ) -> Self {
         let id = Uuid::new_v4().to_string();
         let (s, r) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
         let (published_sender, published_receiver) = broadcast::channel(1024);
 
-        let peer_connection = Self::generate_peer_connection(config)
+        let peer_connection = Self::generate_peer_connection(media_config, transport_config)
             .await
-            .expect("failed to generate peer connection");
+            .unwrap();
 
         let mut transport = Self {
             id,

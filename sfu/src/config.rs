@@ -1,11 +1,8 @@
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use webrtc::{
     api::setting_engine::SettingEngine, peer_connection::configuration::RTCConfiguration,
+    rtp_transceiver::rtp_codec::RTCRtpCodecParameters, sdp::extmap,
 };
 use webrtc_ice::network_type::NetworkType;
 
@@ -23,11 +20,6 @@ pub struct WebRTCTransportConfig {
 
 impl Default for WebRTCTransportConfig {
     fn default() -> Self {
-        let mut setting_engine = SettingEngine::default();
-        setting_engine.set_ip_filter(Box::new(|ip| match ip {
-            IpAddr::V4(ipv4) => Ipv4Addr::new(192, 168, 10, 10) == ipv4,
-            IpAddr::V6(_ipv6) => false,
-        }));
         Self {
             configuration: RTCConfiguration {
                 ..Default::default()
@@ -81,5 +73,60 @@ impl WebRTCTransportConfig {
         }
 
         setting_engine
+    }
+}
+
+#[derive(Clone)]
+pub struct MediaConfig {
+    pub codec: CodecConfig,
+    pub header_extension: HeaderExtensionConfig,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            codec: Default::default(),
+            header_extension: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CodecConfig {
+    pub audio: Vec<RTCRtpCodecParameters>,
+    pub video: Vec<RTCRtpCodecParameters>,
+}
+
+impl Default for CodecConfig {
+    fn default() -> Self {
+        Self {
+            audio: Default::default(),
+            video: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct HeaderExtensionConfig {
+    pub audio: Vec<String>,
+    pub video: Vec<String>,
+}
+
+impl Default for HeaderExtensionConfig {
+    fn default() -> Self {
+        Self {
+            audio: vec![
+                extmap::SDES_MID_URI.to_owned(),
+                extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
+                extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
+                extmap::AUDIO_LEVEL_URI.to_owned(),
+            ],
+            video: vec![
+                extmap::SDES_MID_URI.to_owned(),
+                extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
+                extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
+                extmap::ABS_SEND_TIME_URI.to_owned(),
+            ],
+        }
     }
 }

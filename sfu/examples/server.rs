@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use actix::{Actor, Addr, Message, StreamHandler};
@@ -7,12 +8,14 @@ use actix_web::web::{Data, Query};
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
+use streamsphere::config::MediaConfig;
 use streamsphere::transport::Transport;
 use tokio::sync::Mutex;
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 #[actix_web::main]
@@ -61,6 +64,8 @@ async fn socket(
         .await
         .find_by_id(room_id.to_string());
 
+    let config = MediaConfig::default();
+
     match find {
         Some(room) => {
             tracing::info!("Room found, so joining it: {}", room_id);
@@ -70,7 +75,7 @@ async fn socket(
         None => {
             let owner = room_owner.clone();
             let mut owner = owner.lock().await;
-            let router = streamsphere::router::Router::new();
+            let router = streamsphere::router::Router::new(config);
             let room = owner.create_new_room(room_id.to_string(), router).await;
             let server = WebSocket::new(room).await;
             ws::start(server, &req, stream)
@@ -90,7 +95,15 @@ impl WebSocket {
         tracing::info!("Starting WebSocket");
         let r = room.router.clone();
         let router = r.lock().await;
-        let config = streamsphere::config::WebRTCTransportConfig::default();
+
+        let mut config = streamsphere::config::WebRTCTransportConfig::default();
+        // Public IP address of your server.
+        config.announced_ips = vec![IpAddr::V4(Ipv4Addr::new(192, 168, 10, 10))];
+        config.configuration.ice_servers = vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }];
+
         let publisher = router.create_publish_transport(config.clone()).await;
         let subscriber = router.create_subscribe_transport(config).await;
         Self {

@@ -23,7 +23,7 @@ use webrtc::{
     track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
-use crate::config::WebRTCTransportConfig;
+use crate::config::{MediaConfig, WebRTCTransportConfig};
 use crate::media_track::{detect_mime_type, MediaType};
 use crate::transport;
 use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, Transport};
@@ -51,13 +51,14 @@ pub struct SubscribeTransport {
 impl SubscribeTransport {
     pub async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
-        config: WebRTCTransportConfig,
+        media_config: MediaConfig,
+        transport_config: WebRTCTransportConfig,
     ) -> Arc<Self> {
         let id = Uuid::new_v4().to_string();
 
-        let peer_connection = Self::generate_peer_connection(config)
+        let peer_connection = Self::generate_peer_connection(media_config, transport_config)
             .await
-            .expect("failed to generate peer connection");
+            .unwrap();
 
         let (closed_sender, closed_receiver) = mpsc::unbounded_channel();
 
