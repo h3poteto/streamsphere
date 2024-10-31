@@ -13,7 +13,6 @@ use uuid::Uuid;
 pub struct Router {
     pub id: String,
     publishers: HashMap<String, Arc<Publisher>>,
-    subscribers: HashMap<String, Arc<SubscribeTransport>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     media_config: MediaConfig,
 }
@@ -26,7 +25,6 @@ impl Router {
         let r = Router {
             id: id.clone(),
             publishers: HashMap::new(),
-            subscribers: HashMap::new(),
             router_event_sender: tx,
             media_config,
         };
@@ -82,15 +80,6 @@ impl Router {
                     let mut r = router.lock().await;
                     r.publishers.remove(&track_id);
                 }
-                RouterEvent::SubscriberAdded(subscriber) => {
-                    let mut r = router.lock().await;
-                    let subscriber_id = subscriber.id.clone();
-                    r.subscribers.insert(subscriber_id, subscriber);
-                }
-                RouterEvent::SubscriberRemoved(subscriber_id) => {
-                    let mut r = router.lock().await;
-                    r.subscribers.remove(&subscriber_id);
-                }
                 RouterEvent::GetPublisher(track_id, reply_sender) => {
                     let r = router.lock().await;
                     let track = r.publishers.get(&track_id);
@@ -113,8 +102,6 @@ impl Router {
 pub enum RouterEvent {
     TrackPublished(Arc<Publisher>),
     TrackRemoved(String),
-    SubscriberAdded(Arc<SubscribeTransport>),
-    SubscriberRemoved(String),
     GetPublisher(String, oneshot::Sender<Option<Arc<Publisher>>>),
     Closed,
 }

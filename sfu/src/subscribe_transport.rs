@@ -80,9 +80,6 @@ impl SubscribeTransport {
         transport.ice_state_hooks().await;
 
         let subscriber = Arc::new(transport);
-        let copied = Arc::clone(&subscriber);
-        let sender = subscriber.router_event_sender.clone();
-        let _ = sender.send(RouterEvent::SubscriberAdded(copied));
 
         tracing::trace!("SubscribeTransport {} is created", subscriber.id);
 
@@ -375,10 +372,6 @@ impl SubscribeTransport {
     }
 
     pub async fn close(&self) -> Result<(), Error> {
-        let _ = self
-            .router_event_sender
-            .send(RouterEvent::SubscriberRemoved(self.id.clone()));
-
         self.closed_sender.send(true).unwrap();
 
         self.peer_connection.close().await?;
