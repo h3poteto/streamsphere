@@ -85,8 +85,8 @@ async fn socket(
 
 struct WebSocket {
     room: Arc<Room>,
-    publisher: Arc<streamsphere::publisher::PublishTransport>,
-    subscriber: Arc<streamsphere::subscriber::SubscribeTransport>,
+    publisher: Arc<streamsphere::publish_transport::PublishTransport>,
+    subscriber: Arc<streamsphere::subscribe_transport::SubscribeTransport>,
 }
 
 impl WebSocket {

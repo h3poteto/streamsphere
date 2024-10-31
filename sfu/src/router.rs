@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     config::{MediaConfig, WebRTCTransportConfig},
     media_track::MediaTrack,
-    publisher::PublishTransport,
-    subscriber::SubscribeTransport,
+    publish_transport::PublishTransport,
+    subscribe_transport::SubscribeTransport,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
