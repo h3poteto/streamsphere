@@ -248,7 +248,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                 let subscribe_transport = self.subscribe_transport.clone();
 
                 actix::spawn(async move {
-                    let offer = subscribe_transport
+                    let (subscriber, offer) = subscribe_transport
                         .subscribe(track_id)
                         .await
                         .expect("failed to connect subscribe_transport");
