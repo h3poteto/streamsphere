@@ -25,6 +25,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Subscriber {
     pub id: String,
+    closed_sender: Arc<mpsc::UnboundedSender<bool>>,
 }
 
 impl Subscriber {
@@ -36,11 +37,16 @@ impl Subscriber {
         local_track: Arc<TrackLocalStaticRTP>,
         rtp_buffer: broadcast::Sender<rtp::packet::Packet>,
         track_id: String,
-        closed_receiver: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
+        transport_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
         peer: Arc<RTCPeerConnection>,
     ) -> Self {
         let id = Uuid::new_v4().to_string();
-        let subscriber = Self { id };
+        let (tx, rx) = mpsc::unbounded_channel();
+        let closed_receiver = Arc::new(Mutex::new(rx));
+        let subscriber = Self {
+            id,
+            closed_sender: Arc::new(tx),
+        };
 
         tokio::spawn(enc!((rtcp_sender, publisher_rtcp_sender) async move {
             Self::rtcp_event_loop(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc).await;
@@ -51,12 +57,12 @@ impl Subscriber {
             // We have to drop sender to receive close event when the track has been closed.
             drop(rtp_buffer);
 
-            Self::rtp_event_loop(track_id, local_track, receiver, closed_receiver).await;
+            Self::rtp_event_loop(track_id, local_track, receiver, transport_closed, closed_receiver).await;
             // Upstream track has been closed, so we should remove subscribed track from peer connection.
             let _ = peer.remove_track(&rtcp_sender).await;
         }));
 
-        tracing::trace!("Subscriber {} is created", subscriber.id);
+        tracing::debug!("Subscriber {} is created", subscriber.id);
         subscriber
     }
 
@@ -140,6 +146,7 @@ impl Subscriber {
         track_id: String,
         local_track: Arc<TrackLocalStaticRTP>,
         mut rtp_receiver: broadcast::Receiver<rtp::packet::Packet>,
+        transport_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
         subscriber_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     ) {
         tracing::debug!("Subscriber RTP event loop has started for {}", track_id);
@@ -147,9 +154,13 @@ impl Subscriber {
         let mut curr_timestamp = 0;
 
         loop {
-            let mut closed = subscriber_closed.lock().await;
+            let mut transport_closed = transport_closed.lock().await;
+            let mut subscriber_closed = subscriber_closed.lock().await;
             tokio::select! {
-                _closed = closed.recv() => {
+                _closed = transport_closed.recv() => {
+                    break;
+                }
+                _closed = subscriber_closed.recv() => {
                     break;
                 }
                 res = rtp_receiver.recv() => {
@@ -183,6 +194,12 @@ impl Subscriber {
         }
 
         tracing::debug!("Subscriber RTP event loop has finished for {}", track_id);
+    }
+
+    pub async fn close(&self) {
+        if !self.closed_sender.is_closed() {
+            self.closed_sender.send(true).unwrap();
+        }
     }
 }
 

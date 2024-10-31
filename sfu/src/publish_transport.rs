@@ -67,7 +67,7 @@ impl PublishTransport {
         transport.rtcp_writer_loop();
         transport.ice_state_hooks().await;
 
-        tracing::trace!("PublishTransport {} is created", transport.id);
+        tracing::debug!("PublishTransport {} is created", transport.id);
 
         transport
     }
@@ -248,6 +248,6 @@ impl Transport for PublishTransport {
 
 impl Drop for PublishTransport {
     fn drop(&mut self) {
-        tracing::trace!("PublishTransport {} is dropped", self.id);
+        tracing::debug!("PublishTransport {} is dropped", self.id);
     }
 }

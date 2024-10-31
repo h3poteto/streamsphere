@@ -71,7 +71,7 @@ impl SubscribeTransport {
 
         let subscriber = Arc::new(transport);
 
-        tracing::trace!("SubscribeTransport {} is created", subscriber.id);
+        tracing::debug!("SubscribeTransport {} is created", subscriber.id);
 
         subscriber
     }

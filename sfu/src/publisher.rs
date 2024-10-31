@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use webrtc::rtp::packet::Packet;
 use webrtc::{
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
@@ -18,6 +18,7 @@ pub struct Publisher {
     _rtp_transceiver: Arc<RTCRtpTransceiver>,
     pub rtcp_sender: Arc<transport::RtcpSender>,
     pub rtp_sender: broadcast::Sender<Packet>,
+    closed_sender: Arc<mpsc::UnboundedSender<bool>>,
 }
 
 impl Publisher {
@@ -29,15 +30,16 @@ impl Publisher {
     ) -> (Arc<Self>, oneshot::Receiver<bool>) {
         let id = track.id();
 
-        let (closed_sender, closed_receiver) = oneshot::channel();
+        let (finished_sender, finished_receiver) = oneshot::channel();
         let (rtp_sender, _) = broadcast::channel(1024);
-
+        let (tx, rx) = mpsc::unbounded_channel();
+        let closed_receiver = Arc::new(Mutex::new(rx));
         tokio::spawn(enc!((track, rtp_sender) async move {
-            Self::rtp_event_loop(track, rtp_sender).await;
-            let _ = closed_sender.send(true);
+            Self::rtp_event_loop(track, rtp_sender, closed_receiver).await;
+            let _ = finished_sender.send(true);
         }));
 
-        tracing::trace!("Publisher {} is created", id);
+        tracing::debug!("Publisher {} is created", id);
 
         let publisher = Self {
             id,
@@ -46,12 +48,17 @@ impl Publisher {
             _rtp_transceiver: rtp_transceiver,
             rtcp_sender,
             rtp_sender,
+            closed_sender: Arc::new(tx),
         };
 
-        (Arc::new(publisher), closed_receiver)
+        (Arc::new(publisher), finished_receiver)
     }
 
-    async fn rtp_event_loop(track: Arc<TrackRemote>, rtp_sender: broadcast::Sender<Packet>) {
+    async fn rtp_event_loop(
+        track: Arc<TrackRemote>,
+        rtp_sender: broadcast::Sender<Packet>,
+        publisher_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
+    ) {
         let track_id = track.id().clone();
         tracing::debug!(
             "Publisher RTP event loop has started for {}, {}: {}",
@@ -61,26 +68,43 @@ impl Publisher {
         );
 
         let mut last_timestamp = 0;
-        while let Ok((mut rtp, _attr)) = track.read_rtp().await {
-            let old_timestamp = rtp.header.timestamp;
-            if last_timestamp == 0 {
-                rtp.header.timestamp = 0
-            } else {
-                rtp.header.timestamp -= last_timestamp;
-            }
-            last_timestamp = old_timestamp;
 
-            tracing::trace!(
-                "Publisher {} received RTP ssrc={} seq={} timestamp={}",
-                track_id,
-                rtp.header.ssrc,
-                rtp.header.sequence_number,
-                rtp.header.timestamp
-            );
+        loop {
+            let mut publisher_closed = publisher_closed.lock().await;
+            tokio::select! {
+                _closed = publisher_closed.recv() => {
+                    break;
+                }
+                res = track.read_rtp() => {
+                    match res {
+                        Ok((mut rtp, _attr)) => {
+                            let old_timestamp = rtp.header.timestamp;
+                            if last_timestamp == 0 {
+                                rtp.header.timestamp = 0
+                            } else {
+                                rtp.header.timestamp -= last_timestamp;
+                            }
+                            last_timestamp = old_timestamp;
 
-            if rtp_sender.receiver_count() > 0 {
-                if let Err(e) = rtp_sender.send(rtp) {
-                    tracing::error!("failed to broadcast rtp: {}", e);
+                            tracing::trace!(
+                                "Publisher {} received RTP ssrc={} seq={} timestamp={}",
+                                track_id,
+                                rtp.header.ssrc,
+                                rtp.header.sequence_number,
+                                rtp.header.timestamp
+                            );
+
+                            if rtp_sender.receiver_count() > 0 {
+                                if let Err(e) = rtp_sender.send(rtp) {
+                                    tracing::error!("failed to broadcast rtp: {}", e);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Publisher failed to read rtp: {}", err);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -95,6 +119,10 @@ impl Publisher {
             track.payload_type(),
             track.codec().capability.mime_type
         );
+    }
+
+    pub async fn close(&self) {
+        self.closed_sender.send(true).unwrap();
     }
 }
 
@@ -113,6 +141,6 @@ pub(crate) enum MediaType {
 
 impl Drop for Publisher {
     fn drop(&mut self) {
-        tracing::trace!("Publisher {} is dropped", self.id);
+        tracing::debug!("Publisher {} is dropped", self.id);
     }
 }

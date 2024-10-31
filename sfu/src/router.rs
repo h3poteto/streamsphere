@@ -29,7 +29,7 @@ impl Router {
             media_config,
         };
 
-        tracing::trace!("Router {} is created", id);
+        tracing::debug!("Router {} is created", id);
 
         let router = Arc::new(Mutex::new(r));
         let copied = Arc::clone(&router);
@@ -91,7 +91,7 @@ impl Router {
                 }
             }
         }
-        tracing::info!("Router {} event loop finished", id);
+        tracing::debug!("Router {} event loop finished", id);
     }
 
     pub fn close(&self) {
@@ -108,6 +108,6 @@ pub enum RouterEvent {
 
 impl Drop for Router {
     fn drop(&mut self) {
-        tracing::trace!("Router {} is dropped", self.id);
+        tracing::debug!("Router {} is dropped", self.id);
     }
 }

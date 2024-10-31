@@ -9,6 +9,8 @@ use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use streamsphere::config::MediaConfig;
+use streamsphere::publisher::Publisher;
+use streamsphere::subscriber::Subscriber;
 use streamsphere::transport::Transport;
 use tokio::sync::Mutex;
 use tracing_actix_web::TracingLogger;
@@ -87,6 +89,8 @@ struct WebSocket {
     room: Arc<Room>,
     publish_transport: Arc<streamsphere::publish_transport::PublishTransport>,
     subscribe_transport: Arc<streamsphere::subscribe_transport::SubscribeTransport>,
+    publishers: Arc<Mutex<HashMap<String, Arc<Publisher>>>>,
+    subscribers: Arc<Mutex<HashMap<String, Arc<Subscriber>>>>,
 }
 
 impl WebSocket {
@@ -110,6 +114,8 @@ impl WebSocket {
             room,
             publish_transport: Arc::new(publish_transport),
             subscribe_transport,
+            publishers: Arc::new(Mutex::new(HashMap::new())),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -208,7 +214,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                     tracing::info!("router track ids {:#?}", ids);
                     ids.iter().for_each(|id| {
                         address.do_send(SendingMessage::Published {
-                            track_id: id.to_string(),
+                            publisher_id: id.to_string(),
                         });
                     });
                 });
@@ -244,16 +250,22 @@ impl Handler<ReceivedMessage> for WebSocket {
                     address.do_send(SendingMessage::Answer { sdp: answer });
                 });
             }
-            ReceivedMessage::Subscribe { track_id } => {
+            ReceivedMessage::Subscribe {
+                publisher_id: track_id,
+            } => {
                 let subscribe_transport = self.subscribe_transport.clone();
-
+                let subscribers = self.subscribers.clone();
                 actix::spawn(async move {
                     let (subscriber, offer) = subscribe_transport
                         .subscribe(track_id)
                         .await
                         .expect("failed to connect subscribe_transport");
 
+                    let id = subscriber.id.clone();
+                    let mut s = subscribers.lock().await;
+                    s.insert(subscriber.id.clone(), Arc::new(subscriber));
                     address.do_send(SendingMessage::Offer { sdp: offer });
+                    address.do_send(SendingMessage::Subscribed { subscriber_id: id })
                 });
             }
             ReceivedMessage::Answer { sdp } => {
@@ -268,6 +280,7 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::Publish { track_id } => {
                 let room = self.room.clone();
                 let publish_transport = self.publish_transport.clone();
+                let publishers = self.publishers.clone();
                 actix::spawn(async move {
                     match publish_transport.publish(track_id).await {
                         Ok(publisher) => {
@@ -275,15 +288,35 @@ impl Handler<ReceivedMessage> for WebSocket {
                             // address.do_send(SendingMessage::Published {
                             //     track_id: id.clone(),
                             // });
+                            let mut p = publishers.lock().await;
+                            p.insert(publisher.id.clone(), publisher.clone());
                             room.get_peers(&address).iter().for_each(|peer| {
                                 peer.do_send(SendingMessage::Published {
-                                    track_id: publisher.id.clone(),
+                                    publisher_id: publisher.id.clone(),
                                 });
                             });
                         }
                         Err(err) => {
                             tracing::error!("{}", err);
                         }
+                    }
+                });
+            }
+            ReceivedMessage::StopPublish { publisher_id } => {
+                let publishers = self.publishers.clone();
+                actix::spawn(async move {
+                    let mut p = publishers.lock().await;
+                    if let Some(publisher) = p.remove(&publisher_id) {
+                        publisher.close().await;
+                    }
+                });
+            }
+            ReceivedMessage::StopSubscribe { subscriber_id } => {
+                let subscribers = self.subscribers.clone();
+                actix::spawn(async move {
+                    let mut s = subscribers.lock().await;
+                    if let Some(subscriber) = s.remove(&subscriber_id) {
+                        subscriber.close().await;
                     }
                 });
             }
@@ -326,11 +359,15 @@ enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Offer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
-    Subscribe { track_id: String },
+    Subscribe { publisher_id: String },
     #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
     Publish { track_id: String },
+    #[serde(rename_all = "camelCase")]
+    StopPublish { publisher_id: String },
+    #[serde(rename_all = "camelCase")]
+    StopSubscribe { subscriber_id: String },
 }
 
 #[derive(Serialize, Message, Debug)]
@@ -350,7 +387,9 @@ enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     SubscriberIce { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
-    Published { track_id: String },
+    Published { publisher_id: String },
+    #[serde(rename_all = "camelCase")]
+    Subscribed { subscriber_id: String },
 }
 
 #[derive(Message, Debug)]
