@@ -1,7 +1,7 @@
 use crate::{
     config::{MediaConfig, WebRTCTransportConfig},
     error::{Error, PublisherErrorKind, TransportErrorKind},
-    media_track::MediaTrack,
+    publisher::Publisher,
     router::RouterEvent,
     transport::{OnIceCandidateFn, OnTrackFn, RtcpReceiver, RtcpSender, Transport},
 };
@@ -21,8 +21,8 @@ pub struct PublishTransport {
     pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
     pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
-    published_sender: broadcast::Sender<String>,
-    published_receiver: Arc<Mutex<broadcast::Receiver<String>>>,
+    published_sender: broadcast::Sender<Arc<Publisher>>,
+    published_receiver: Arc<Mutex<broadcast::Receiver<Arc<Publisher>>>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     // For RTCP writer
     rtcp_sender_channel: Arc<RtcpSender>,
@@ -80,11 +80,11 @@ impl PublishTransport {
         Ok(answer)
     }
 
-    pub async fn publish(&self, track_id: String) -> Result<String, Error> {
+    pub async fn publish(&self, track_id: String) -> Result<Arc<Publisher>, Error> {
         let receiver = self.published_receiver.clone();
-        while let Ok(published_id) = receiver.lock().await.recv().await {
-            if published_id == track_id {
-                return Ok(published_id);
+        while let Ok(publisher) = receiver.lock().await.recv().await {
+            if publisher.id == track_id {
+                return Ok(publisher);
             }
         }
         Err(Error::new_publisher(
@@ -187,9 +187,11 @@ impl PublishTransport {
                     let id = track.id();
                     let ssrc = track.ssrc();
                     tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
-                    published_sender.send(id.clone()).expect("could not send published track id to publisher");
-                    let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
-                    let _ = router_sender.send(RouterEvent::TrackPublished(media_track));
+
+                    let (publisher, closed) = Publisher::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
+
+                    published_sender.send(publisher.clone()).expect("could not send published track id to publisher");
+                    let _ = router_sender.send(RouterEvent::TrackPublished(publisher));
 
                     (locked)(track, receiver, transceiver);
 

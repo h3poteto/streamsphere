@@ -10,8 +10,8 @@ use webrtc::{
 
 use crate::transport;
 
-#[derive(Clone)]
-pub struct MediaTrack {
+#[derive(Clone, Debug)]
+pub struct Publisher {
     pub id: String,
     pub track: Arc<TrackRemote>,
     _rtp_receiver: Arc<RTCRtpReceiver>,
@@ -20,13 +20,13 @@ pub struct MediaTrack {
     pub rtp_sender: broadcast::Sender<Packet>,
 }
 
-impl MediaTrack {
+impl Publisher {
     pub fn new(
         track: Arc<TrackRemote>,
         rtp_receiver: Arc<RTCRtpReceiver>,
         rtp_transceiver: Arc<RTCRtpTransceiver>,
         rtcp_sender: Arc<transport::RtcpSender>,
-    ) -> (Self, oneshot::Receiver<bool>) {
+    ) -> (Arc<Self>, oneshot::Receiver<bool>) {
         let id = track.id();
 
         let (closed_sender, closed_receiver) = oneshot::channel();
@@ -37,25 +37,24 @@ impl MediaTrack {
             let _ = closed_sender.send(true);
         }));
 
-        tracing::trace!("MediaTrack {} is created", id);
+        tracing::trace!("Publisher {} is created", id);
 
-        (
-            Self {
-                id,
-                track,
-                _rtp_receiver: rtp_receiver,
-                _rtp_transceiver: rtp_transceiver,
-                rtcp_sender,
-                rtp_sender,
-            },
-            closed_receiver,
-        )
+        let publisher = Self {
+            id,
+            track,
+            _rtp_receiver: rtp_receiver,
+            _rtp_transceiver: rtp_transceiver,
+            rtcp_sender,
+            rtp_sender,
+        };
+
+        (Arc::new(publisher), closed_receiver)
     }
 
     async fn rtp_event_loop(track: Arc<TrackRemote>, rtp_sender: broadcast::Sender<Packet>) {
         let track_id = track.id().clone();
         tracing::debug!(
-            "MediaTrack RTP event loop has started for {}, {}: {}",
+            "Publisher RTP event loop has started for {}, {}: {}",
             track_id,
             track.payload_type(),
             track.codec().capability.mime_type
@@ -72,7 +71,7 @@ impl MediaTrack {
             last_timestamp = old_timestamp;
 
             tracing::trace!(
-                "MediaTrack {} received RTP ssrc={} seq={} timestamp={}",
+                "Publisher {} received RTP ssrc={} seq={} timestamp={}",
                 track_id,
                 rtp.header.ssrc,
                 rtp.header.sequence_number,
@@ -91,7 +90,7 @@ impl MediaTrack {
         drop(rtp_sender);
 
         tracing::debug!(
-            "MediaTrack RTP event loop has finished for {}, {}: {}",
+            "Publisher RTP event loop has finished for {}, {}: {}",
             track_id,
             track.payload_type(),
             track.codec().capability.mime_type
@@ -112,8 +111,8 @@ pub(crate) enum MediaType {
     Audio,
 }
 
-impl Drop for MediaTrack {
+impl Drop for Publisher {
     fn drop(&mut self) {
-        tracing::trace!("MediaTrack {} is dropped", self.id);
+        tracing::trace!("Publisher {} is dropped", self.id);
     }
 }

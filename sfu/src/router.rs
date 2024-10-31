@@ -2,8 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     config::{MediaConfig, WebRTCTransportConfig},
-    media_track::MediaTrack,
     publish_transport::PublishTransport,
+    publisher::Publisher,
     subscribe_transport::SubscribeTransport,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -12,7 +12,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Router {
     pub id: String,
-    tracks: HashMap<String, Arc<MediaTrack>>,
+    publishers: HashMap<String, Arc<Publisher>>,
     subscribers: HashMap<String, Arc<SubscribeTransport>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     media_config: MediaConfig,
@@ -25,7 +25,7 @@ impl Router {
 
         let r = Router {
             id: id.clone(),
-            tracks: HashMap::new(),
+            publishers: HashMap::new(),
             subscribers: HashMap::new(),
             router_event_sender: tx,
             media_config,
@@ -43,7 +43,11 @@ impl Router {
     }
 
     pub fn track_ids(&self) -> Vec<String> {
-        self.tracks.clone().into_iter().map(|(k, _)| k).collect()
+        self.publishers
+            .clone()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
     }
 
     pub async fn create_publish_transport(
@@ -69,14 +73,14 @@ impl Router {
     ) {
         while let Some(event) = event_receiver.recv().await {
             match event {
-                RouterEvent::TrackPublished(track) => {
+                RouterEvent::TrackPublished(publisher) => {
                     let mut r = router.lock().await;
-                    let track_id = track.id.clone();
-                    r.tracks.insert(track_id, Arc::new(track));
+                    let track_id = publisher.id.clone();
+                    r.publishers.insert(track_id, publisher);
                 }
                 RouterEvent::TrackRemoved(track_id) => {
                     let mut r = router.lock().await;
-                    r.tracks.remove(&track_id);
+                    r.publishers.remove(&track_id);
                 }
                 RouterEvent::SubscriberAdded(subscriber) => {
                     let mut r = router.lock().await;
@@ -87,9 +91,9 @@ impl Router {
                     let mut r = router.lock().await;
                     r.subscribers.remove(&subscriber_id);
                 }
-                RouterEvent::GetMediaTrack(track_id, reply_sender) => {
+                RouterEvent::GetPublisher(track_id, reply_sender) => {
                     let r = router.lock().await;
-                    let track = r.tracks.get(&track_id);
+                    let track = r.publishers.get(&track_id);
                     let data = track.cloned();
                     let _ = reply_sender.send(data);
                 }
@@ -107,11 +111,11 @@ impl Router {
 }
 
 pub enum RouterEvent {
-    TrackPublished(MediaTrack),
+    TrackPublished(Arc<Publisher>),
     TrackRemoved(String),
     SubscriberAdded(Arc<SubscribeTransport>),
     SubscriberRemoved(String),
-    GetMediaTrack(String, oneshot::Sender<Option<Arc<MediaTrack>>>),
+    GetPublisher(String, oneshot::Sender<Option<Arc<Publisher>>>),
     Closed,
 }
 

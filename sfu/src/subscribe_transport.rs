@@ -24,12 +24,12 @@ use webrtc::{
 };
 
 use crate::config::{MediaConfig, WebRTCTransportConfig};
-use crate::media_track::{detect_mime_type, MediaType};
+use crate::publisher::{detect_mime_type, MediaType};
 use crate::transport;
 use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, Transport};
 use crate::{
     error::{Error, SubscriberErrorKind},
-    media_track::MediaTrack,
+    publisher::Publisher,
     router::RouterEvent,
 };
 
@@ -89,7 +89,7 @@ impl SubscribeTransport {
         subscriber
     }
 
-    pub async fn subscribe(&self, track_id: String) -> Result<RTCSessionDescription, Error> {
+    pub async fn subscribe(&self, publisher_id: String) -> Result<RTCSessionDescription, Error> {
         // We have to add a track before creating offer.
         // https://datatracker.ietf.org/doc/html/rfc3264
         // https://github.com/webrtc-rs/webrtc/issues/115#issuecomment-1958137875
@@ -97,13 +97,13 @@ impl SubscribeTransport {
 
         let _ = self
             .router_event_sender
-            .send(RouterEvent::GetMediaTrack(track_id.clone(), tx));
+            .send(RouterEvent::GetPublisher(publisher_id.clone(), tx));
 
         let reply = rx.await.unwrap();
         match reply {
             None => {
                 return Err(Error::new_subscriber(
-                    format!("Media track for {} is not found", track_id),
+                    format!("Media track for {} is not found", publisher_id),
                     SubscriberErrorKind::TrackNotFoundError,
                 ))
             }
@@ -156,7 +156,7 @@ impl SubscribeTransport {
         Ok(())
     }
 
-    async fn subscribe_track(&self, media_track: Arc<MediaTrack>) -> Result<(), Error> {
+    async fn subscribe_track(&self, media_track: Arc<Publisher>) -> Result<(), Error> {
         let publisher_rtcp_sender = media_track.rtcp_sender.clone();
         let track_id = media_track.track.id();
         let local_track = TrackLocalStaticRTP::new(

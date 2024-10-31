@@ -85,8 +85,8 @@ async fn socket(
 
 struct WebSocket {
     room: Arc<Room>,
-    publisher: Arc<streamsphere::publish_transport::PublishTransport>,
-    subscriber: Arc<streamsphere::subscribe_transport::SubscribeTransport>,
+    publish_transport: Arc<streamsphere::publish_transport::PublishTransport>,
+    subscribe_transport: Arc<streamsphere::subscribe_transport::SubscribeTransport>,
 }
 
 impl WebSocket {
@@ -104,12 +104,12 @@ impl WebSocket {
             ..Default::default()
         }];
 
-        let publisher = router.create_publish_transport(config.clone()).await;
-        let subscriber = router.create_subscribe_transport(config).await;
+        let publish_transport = router.create_publish_transport(config.clone()).await;
+        let subscribe_transport = router.create_subscribe_transport(config).await;
         Self {
             room,
-            publisher: Arc::new(publisher),
-            subscriber,
+            publish_transport: Arc::new(publish_transport),
+            subscribe_transport,
         }
     }
 }
@@ -126,14 +126,17 @@ impl Actor for WebSocket {
     fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::info!("The WebSocket connection is stopped");
         let address = ctx.address();
-        let subscriber = self.subscriber.clone();
-        let publisher = self.publisher.clone();
+        let subscribe_transport = self.subscribe_transport.clone();
+        let publish_transport = self.publish_transport.clone();
         actix::spawn(async move {
-            subscriber
+            subscribe_transport
                 .close()
                 .await
-                .expect("failed to close subscriber");
-            publisher.close().await.expect("failed to close publisher");
+                .expect("failed to close subscribe_transport");
+            publish_transport
+                .close()
+                .await
+                .expect("failed to close publish_transport");
         });
         self.room.remove_user(address);
     }
@@ -171,10 +174,10 @@ impl Handler<ReceivedMessage> for WebSocket {
                 address.do_send(SendingMessage::Pong);
             }
             ReceivedMessage::PublisherInit => {
-                let publisher = self.publisher.clone();
+                let publish_transport = self.publish_transport.clone();
                 tokio::spawn(async move {
                     let addr = address.clone();
-                    publisher
+                    publish_transport
                         .on_ice_candidate(Box::new(move |candidate| {
                             let init = candidate.to_json().expect("failed to parse candidate");
                             addr.do_send(SendingMessage::PublisherIce { candidate: init });
@@ -183,18 +186,18 @@ impl Handler<ReceivedMessage> for WebSocket {
                 });
             }
             ReceivedMessage::SubscriberInit => {
-                let subscriber = self.subscriber.clone();
+                let subscribe_transport = self.subscribe_transport.clone();
                 let room = self.room.clone();
                 tokio::spawn(async move {
                     let addr = address.clone();
                     let addr2 = address.clone();
-                    subscriber
+                    subscribe_transport
                         .on_ice_candidate(Box::new(move |candidate| {
                             let init = candidate.to_json().expect("failed to parse candidate");
                             addr.do_send(SendingMessage::SubscriberIce { candidate: init });
                         }))
                         .await;
-                    subscriber
+                    subscribe_transport
                         .on_negotiation_needed(Box::new(move |offer| {
                             addr2.do_send(SendingMessage::Offer { sdp: offer });
                         }))
@@ -213,50 +216,50 @@ impl Handler<ReceivedMessage> for WebSocket {
 
             ReceivedMessage::RequestPublish => address.do_send(SendingMessage::StartAsPublisher),
             ReceivedMessage::PublisherIce { candidate } => {
-                let publisher = self.publisher.clone();
+                let publish_transport = self.publish_transport.clone();
                 actix::spawn(async move {
-                    let _ = publisher
+                    let _ = publish_transport
                         .add_ice_candidate(candidate)
                         .await
                         .expect("failed to add ICE candidate");
                 });
             }
             ReceivedMessage::SubscriberIce { candidate } => {
-                let subscriber = self.subscriber.clone();
+                let subscribe_transport = self.subscribe_transport.clone();
                 actix::spawn(async move {
-                    let _ = subscriber
+                    let _ = subscribe_transport
                         .add_ice_candidate(candidate)
                         .await
                         .expect("failed to add ICE candidate");
                 });
             }
             ReceivedMessage::Offer { sdp } => {
-                let publisher = self.publisher.clone();
+                let publish_transport = self.publish_transport.clone();
                 actix::spawn(async move {
-                    let answer = publisher
+                    let answer = publish_transport
                         .get_answer(sdp)
                         .await
-                        .expect("failed to connect publishder");
+                        .expect("failed to connect publish_transport");
 
                     address.do_send(SendingMessage::Answer { sdp: answer });
                 });
             }
             ReceivedMessage::Subscribe { track_id } => {
-                let subscriber = self.subscriber.clone();
+                let subscribe_transport = self.subscribe_transport.clone();
 
                 actix::spawn(async move {
-                    let offer = subscriber
+                    let offer = subscribe_transport
                         .subscribe(track_id)
                         .await
-                        .expect("failed to connect subscriber");
+                        .expect("failed to connect subscribe_transport");
 
                     address.do_send(SendingMessage::Offer { sdp: offer });
                 });
             }
             ReceivedMessage::Answer { sdp } => {
-                let subscriber = self.subscriber.clone();
+                let subscribe_transport = self.subscribe_transport.clone();
                 actix::spawn(async move {
-                    let _ = subscriber
+                    let _ = subscribe_transport
                         .set_answer(sdp)
                         .await
                         .expect("failed to set answer");
@@ -264,17 +267,17 @@ impl Handler<ReceivedMessage> for WebSocket {
             }
             ReceivedMessage::Publish { track_id } => {
                 let room = self.room.clone();
-                let publisher = self.publisher.clone();
+                let publish_transport = self.publish_transport.clone();
                 actix::spawn(async move {
-                    match publisher.publish(track_id).await {
-                        Ok(id) => {
-                            tracing::debug!("published a track: {}", id);
+                    match publish_transport.publish(track_id).await {
+                        Ok(publisher) => {
+                            tracing::debug!("published a track: {}", publisher.id);
                             // address.do_send(SendingMessage::Published {
                             //     track_id: id.clone(),
                             // });
                             room.get_peers(&address).iter().for_each(|peer| {
                                 peer.do_send(SendingMessage::Published {
-                                    track_id: id.clone(),
+                                    track_id: publisher.id.clone(),
                                 });
                             });
                         }
