@@ -4,6 +4,7 @@ let subscribePeer: RTCPeerConnection;
 let localVideo: HTMLVideoElement;
 let remoteVideo: HTMLVideoElement;
 let localStream: MediaStream;
+let subscriberId: string;
 
 let connectButton: HTMLButtonElement;
 let captureButton: HTMLButtonElement;
@@ -33,7 +34,7 @@ export function setup() {
   stopButton.disabled = true;
   captureButton.addEventListener("click", capture);
   connectButton.addEventListener("click", connect);
-  stopButton.addEventListener("click", disconnect);
+  stopButton.addEventListener("click", stop);
 }
 
 async function connect() {
@@ -61,6 +62,7 @@ async function connect() {
 async function capture() {
   console.log("Requesting local stream");
   captureButton.disabled = true;
+  stopButton.disabled = false;
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
@@ -75,20 +77,23 @@ async function capture() {
   }
 }
 
-async function disconnect() {
+async function stop() {
   console.log("Stopping");
-  close();
-}
-
-function close() {
-  ws.send(JSON.stringify({ action: "Close" }));
-  publishPeer?.close();
-  subscribePeer?.close();
-  localStream?.getTracks().forEach((track) => track.stop());
-  ws.close();
+  localStream?.getTracks().forEach((track) => {
+    ws.send(JSON.stringify({ action: "StopPublish", publisherId: track.id }));
+    track.stop();
+  });
+  if (subscriberId) {
+    ws.send(
+      JSON.stringify({
+        action: "StopSubscribe",
+        subscriberId: subscriberId,
+      }),
+    );
+  }
   stopButton.disabled = true;
-  captureButton.disabled = true;
-  connectButton.disabled = false;
+  captureButton.disabled = false;
+  connectButton.disabled = true;
 }
 
 function startPublishPeer() {
@@ -199,13 +204,14 @@ function messageHandler(event: MessageEvent) {
       ws.send(
         JSON.stringify({
           action: "Subscribe",
-          trackId: message.trackId,
+          publisherId: message.publisherId,
         }),
       );
       break;
-    case "Close":
-      close();
-      return;
+    case "Subscribed":
+      subscriberId = message.subscriberId;
+      stopButton.disabled = false;
+      break;
     case "Pong":
       console.debug("pong");
       break;

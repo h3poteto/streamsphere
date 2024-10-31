@@ -1,251 +1,146 @@
-use crate::{
-    config::{MediaConfig, WebRTCTransportConfig},
-    error::{Error, PublisherErrorKind, TransportErrorKind},
-    media_track::MediaTrack,
-    router::RouterEvent,
-    transport::{OnIceCandidateFn, OnTrackFn, RtcpReceiver, RtcpSender, Transport},
-};
-use enclose::enc;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
-use uuid::Uuid;
+
+use enclose::enc;
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use webrtc::rtp::packet::Packet;
 use webrtc::{
-    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
-    peer_connection::{sdp::session_description::RTCSessionDescription, RTCPeerConnection},
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::track_remote::TrackRemote,
 };
 
-#[derive(Clone)]
-pub struct PublishTransport {
+use crate::transport;
+
+#[derive(Clone, Debug)]
+pub struct Publisher {
     pub id: String,
-    peer_connection: Arc<RTCPeerConnection>,
-    pending_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
-    published_sender: broadcast::Sender<String>,
-    published_receiver: Arc<Mutex<broadcast::Receiver<String>>>,
-    router_event_sender: mpsc::UnboundedSender<RouterEvent>,
-    // For RTCP writer
-    rtcp_sender_channel: Arc<RtcpSender>,
-    rtcp_receiver_channel: Arc<Mutex<RtcpReceiver>>,
-    stop_sender_channel: Arc<Mutex<mpsc::UnboundedSender<()>>>,
-    stop_receiver_channel: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
-    // For callback fn
-    on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
-    on_track_fn: Arc<Mutex<OnTrackFn>>,
+    pub track: Arc<TrackRemote>,
+    _rtp_receiver: Arc<RTCRtpReceiver>,
+    _rtp_transceiver: Arc<RTCRtpTransceiver>,
+    pub rtcp_sender: Arc<transport::RtcpSender>,
+    pub rtp_sender: broadcast::Sender<Packet>,
+    closed_sender: Arc<mpsc::UnboundedSender<bool>>,
 }
 
-impl PublishTransport {
-    pub async fn new(
-        router_event_sender: mpsc::UnboundedSender<RouterEvent>,
-        media_config: MediaConfig,
-        transport_config: WebRTCTransportConfig,
-    ) -> Self {
-        let id = Uuid::new_v4().to_string();
-        let (s, r) = mpsc::unbounded_channel();
-        let (stop_sender, stop_receiver) = mpsc::unbounded_channel();
-        let (published_sender, published_receiver) = broadcast::channel(1024);
+impl Publisher {
+    pub fn new(
+        track: Arc<TrackRemote>,
+        rtp_receiver: Arc<RTCRtpReceiver>,
+        rtp_transceiver: Arc<RTCRtpTransceiver>,
+        rtcp_sender: Arc<transport::RtcpSender>,
+    ) -> (Arc<Self>, oneshot::Receiver<bool>) {
+        let id = track.id();
 
-        let peer_connection = Self::generate_peer_connection(media_config, transport_config)
-            .await
-            .unwrap();
+        let (finished_sender, finished_receiver) = oneshot::channel();
+        let (rtp_sender, _) = broadcast::channel(1024);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let closed_receiver = Arc::new(Mutex::new(rx));
+        tokio::spawn(enc!((track, rtp_sender) async move {
+            Self::rtp_event_loop(track, rtp_sender, closed_receiver).await;
+            let _ = finished_sender.send(true);
+        }));
 
-        let mut transport = Self {
+        tracing::debug!("Publisher {} is created", id);
+
+        let publisher = Self {
             id,
-            peer_connection: Arc::new(peer_connection),
-            router_event_sender,
-            published_sender,
-            published_receiver: Arc::new(Mutex::new(published_receiver)),
-            pending_candidates: Arc::new(Mutex::new(Vec::new())),
-            rtcp_sender_channel: Arc::new(s),
-            rtcp_receiver_channel: Arc::new(Mutex::new(r)),
-            stop_sender_channel: Arc::new(Mutex::new(stop_sender)),
-            stop_receiver_channel: Arc::new(Mutex::new(stop_receiver)),
-            on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
-            on_track_fn: Arc::new(Mutex::new(Box::new(|_, _, _| {}))),
+            track,
+            _rtp_receiver: rtp_receiver,
+            _rtp_transceiver: rtp_transceiver,
+            rtcp_sender,
+            rtp_sender,
+            closed_sender: Arc::new(tx),
         };
 
-        transport.rtcp_writer_loop();
-        transport.ice_state_hooks().await;
-
-        tracing::trace!("PublishTransport {} is created", transport.id);
-
-        transport
+        (Arc::new(publisher), finished_receiver)
     }
 
-    pub async fn get_answer(
-        &self,
-        sdp: RTCSessionDescription,
-    ) -> Result<RTCSessionDescription, Error> {
-        let answer = self.get_answer_for_offer(sdp).await?;
-        Ok(answer)
-    }
+    async fn rtp_event_loop(
+        track: Arc<TrackRemote>,
+        rtp_sender: broadcast::Sender<Packet>,
+        publisher_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
+    ) {
+        let track_id = track.id().clone();
+        tracing::debug!(
+            "Publisher RTP event loop has started for {}, {}: {}",
+            track_id,
+            track.payload_type(),
+            track.codec().capability.mime_type
+        );
 
-    pub async fn publish(&self, track_id: String) -> Result<String, Error> {
-        let receiver = self.published_receiver.clone();
-        while let Ok(published_id) = receiver.lock().await.recv().await {
-            if published_id == track_id {
-                return Ok(published_id);
-            }
-        }
-        Err(Error::new_publisher(
-            "Failed to get published track".to_string(),
-            PublisherErrorKind::TrackNotPublishedError,
-        ))
-    }
+        let mut last_timestamp = 0;
 
-    async fn get_answer_for_offer(
-        &self,
-        offer: RTCSessionDescription,
-    ) -> Result<RTCSessionDescription, Error> {
-        tracing::debug!("publisher set remote description");
-        self.peer_connection.set_remote_description(offer).await?;
-        let pendings = self.pending_candidates.lock().await;
-        for candidate in pendings.iter() {
-            tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
-            if let Err(err) = self
-                .peer_connection
-                .add_ice_candidate(candidate.clone())
-                .await
-            {
-                tracing::error!("failed to add_ice_candidate: {}", err);
-            }
-        }
+        loop {
+            let mut publisher_closed = publisher_closed.lock().await;
+            tokio::select! {
+                _closed = publisher_closed.recv() => {
+                    break;
+                }
+                res = track.read_rtp() => {
+                    match res {
+                        Ok((mut rtp, _attr)) => {
+                            let old_timestamp = rtp.header.timestamp;
+                            if last_timestamp == 0 {
+                                rtp.header.timestamp = 0
+                            } else {
+                                rtp.header.timestamp -= last_timestamp;
+                            }
+                            last_timestamp = old_timestamp;
 
-        let answer = self.peer_connection.create_answer(None).await?;
-        self.peer_connection.set_local_description(answer).await?;
-        match self.peer_connection.local_description().await {
-            Some(answer) => Ok(answer),
-            None => Err(Error::new_transport(
-                "Failed to set local description".to_string(),
-                TransportErrorKind::LocalDescriptionError,
-            )),
-        }
-    }
+                            tracing::trace!(
+                                "Publisher {} received RTP ssrc={} seq={} timestamp={}",
+                                track_id,
+                                rtp.header.ssrc,
+                                rtp.header.sequence_number,
+                                rtp.header.timestamp
+                            );
 
-    fn rtcp_writer_loop(&self) {
-        let rtcp_receiver = self.rtcp_receiver_channel.clone();
-        let stop_receiver = self.stop_receiver_channel.clone();
-        let pc = self.peer_connection.clone();
-        tokio::spawn(async move {
-            tracing::info!("RTCP writer loop");
-            loop {
-                let mut rtcp_receiver = rtcp_receiver.lock().await;
-                let mut stop_receiver = stop_receiver.lock().await;
-                tokio::select! {
-                    data = rtcp_receiver.recv() => {
-                        if let Some(data) = data {
-                            if let Err(err) = pc.write_rtcp(&[data]).await {
-                                tracing::error!("Error writing RTCP: {}", err);
+                            if rtp_sender.receiver_count() > 0 {
+                                if let Err(e) = rtp_sender.send(rtp) {
+                                    tracing::error!("failed to broadcast rtp: {}", e);
+                                }
                             }
                         }
-                    }
-                    _data = stop_receiver.recv() => {
-                        tracing::info!("RTCP writer loop stopped");
-                        return;
-                    }
-                };
-            }
-        });
-    }
-
-    // ICE events
-    async fn ice_state_hooks(&mut self) {
-        let peer = self.peer_connection.clone();
-        let on_ice_candidate = Arc::clone(&self.on_ice_candidate_fn);
-
-        // This callback is called after initializing PeerConnection with ICE servers.
-        peer.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
-            Box::pin({
-                let func = on_ice_candidate.clone();
-                async move {
-                    let locked = func.lock().await;
-                    if let Some(candidate) = candidate {
-                        tracing::info!("on ice candidate: {}", candidate);
-                        // Call on_ice_candidate_fn as callback.
-                        (locked)(candidate);
+                        Err(err) => {
+                            tracing::error!("Publisher failed to read rtp: {}", err);
+                            break;
+                        }
                     }
                 }
-            })
-        }));
-
-        peer.on_negotiation_needed(Box::new(move || {
-            Box::pin(async move {
-                tracing::error!("on negotiation needed in publisher");
-            })
-        }));
-
-        let on_track = Arc::clone(&self.on_track_fn);
-        let router_sender = self.router_event_sender.clone();
-        let rtcp_sender = self.rtcp_sender_channel.clone();
-        let published_sender = self.published_sender.clone();
-        peer.on_track(Box::new(enc!( (on_track, router_sender, rtcp_sender, published_sender)
-            move |track: Arc<TrackRemote>,
-                  receiver: Arc<RTCRtpReceiver>,
-                  transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, router_sender, rtcp_sender, published_sender) async move {
-                    let locked = on_track.lock().await;
-                    let id = track.id();
-                    let ssrc = track.ssrc();
-                    tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
-                    published_sender.send(id.clone()).expect("could not send published track id to publisher");
-                    let (media_track, closed) = MediaTrack::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender);
-                    let _ = router_sender.send(RouterEvent::TrackPublished(media_track));
-
-                    (locked)(track, receiver, transceiver);
-
-                    // Keep this thread until closed, and send TrackRemove event
-                    let _ = closed.await;
-                    let _ = router_sender.send(RouterEvent::TrackRemoved(id));
-                }))
             }
-        )));
-
-        peer.on_ice_gathering_state_change(Box::new(move |state| {
-            Box::pin(async move {
-                tracing::debug!("ICE gathering state changed: {}", state);
-            })
-        }));
-    }
-
-    // Hooks
-    pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
-        let mut callback = self.on_ice_candidate_fn.lock().await;
-        *callback = f;
-    }
-
-    pub async fn on_track(&mut self, f: OnTrackFn) {
-        let mut callback = self.on_track_fn.lock().await;
-        *callback = f;
-    }
-
-    pub async fn close(&self) -> Result<(), Error> {
-        if let Err(err) = self.stop_sender_channel.lock().await.send(()) {
-            tracing::error!("failed to stop rtcp writer loop: {}", err);
         }
-        self.peer_connection.close().await?;
-        Ok(())
+
+        // When the track is finished, we should notify the subscriber
+        // Subscriber should stop rtp_event_loop and rtcp_event_loop after it.
+        drop(rtp_sender);
+
+        tracing::debug!(
+            "Publisher RTP event loop has finished for {}, {}: {}",
+            track_id,
+            track.payload_type(),
+            track.codec().capability.mime_type
+        );
+    }
+
+    pub async fn close(&self) {
+        self.closed_sender.send(true).unwrap();
     }
 }
 
-impl Transport for PublishTransport {
-    async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
-        if let Some(_rd) = self.peer_connection.remote_description().await {
-            tracing::debug!("Adding ICE candidate for {:#?}", candidate);
-            let _ = self
-                .peer_connection
-                .add_ice_candidate(candidate.clone())
-                .await?;
-        } else {
-            tracing::debug!("Pending ICE candidate for {:#?}", candidate);
-            self.pending_candidates.lock().await.push(candidate.clone());
-        }
-
-        Ok(())
+pub(crate) fn detect_mime_type(mime_type: String) -> MediaType {
+    if mime_type.contains("video") || mime_type.contains("Video") {
+        MediaType::Video
+    } else {
+        MediaType::Audio
     }
 }
 
-impl Drop for PublishTransport {
+pub(crate) enum MediaType {
+    Video,
+    Audio,
+}
+
+impl Drop for Publisher {
     fn drop(&mut self) {
-        tracing::trace!("PublishTransport {} is dropped", self.id);
+        tracing::debug!("Publisher {} is dropped", self.id);
     }
 }
