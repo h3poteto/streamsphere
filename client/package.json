@@ -1,15 +1,11 @@
 {
-  "name": "frontend",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+  "workspaces": [
+    "rheomesh",
+    "example"
+  ],
+  "engines": {
+    "npm": "use yarn instead"
   },
-  "devDependencies": {
-    "typescript": "^5.2.2",
-    "vite": "^5.2.0"
-  }
+  "packageManager": "yarn@4.5.1"
 }
