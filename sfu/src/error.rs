@@ -71,7 +71,7 @@ impl Error {
 
 impl fmt::Debug for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut builder = f.debug_struct("streamsphere::TransportError");
+        let mut builder = f.debug_struct("rheomesh::TransportError");
 
         builder.field("kind", &self.kind);
         builder.field("message", &self.message);
@@ -82,7 +82,7 @@ impl fmt::Debug for TransportError {
 
 impl fmt::Debug for SubscriberError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut builder = f.debug_struct("streamsphere::SubscriberError");
+        let mut builder = f.debug_struct("rheomesh::SubscriberError");
 
         builder.field("kind", &self.kind);
         builder.field("message", &self.message);
@@ -93,7 +93,7 @@ impl fmt::Debug for SubscriberError {
 
 impl fmt::Debug for PublisherError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut builder = f.debug_struct("streamsphere::PublisherError");
+        let mut builder = f.debug_struct("rheomesh::PublisherError");
 
         builder.field("kind", &self.kind);
         builder.field("message", &self.message);

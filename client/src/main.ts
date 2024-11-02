@@ -2,7 +2,7 @@ import { setup } from "./connection.ts";
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div>
-    <h1>Streamsphere</h1>
+    <h1>Rheomesh</h1>
     <video id="localVideo" playsinline autoplay muted width="480"></video>
     <video id="remoteVideo" playsinline autoplay width="480"></video>
     <div class="card">
