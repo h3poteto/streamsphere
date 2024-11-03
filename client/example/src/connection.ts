@@ -118,11 +118,6 @@ function startSubscribePeer() {
         }),
       );
     });
-
-    subscribeTransport.on("track", (streams) => {
-      console.log("Received remote stream");
-      remoteVideo.srcObject = streams[0];
-    });
   }
 }
 
@@ -169,6 +164,10 @@ function messageHandler(event: MessageEvent) {
           publisherId: message.publisherId,
         }),
       );
+      subscribeTransport.subscribe(message.publisherId).then((track) => {
+        const stream = new MediaStream([track]);
+        remoteVideo.srcObject = stream;
+      });
       break;
     case "Subscribed":
       subscriberId = message.subscriberId;

@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 export class SubscribeTransport extends EventEmitter {
   private _peerConnection: RTCPeerConnection;
   private _queue: Array<RTCIceCandidateInit>;
+  private _track: { [publisherId: string]: MediaStreamTrack };
 
   constructor(config: RTCConfiguration) {
     super();
@@ -10,6 +11,7 @@ export class SubscribeTransport extends EventEmitter {
 
     this._peerConnection = peer;
     this._queue = [];
+    this._track = {};
 
     this._peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -18,8 +20,9 @@ export class SubscribeTransport extends EventEmitter {
     };
 
     this._peerConnection.ontrack = (event) => {
-      // todo: should we prepare subscrbie method?
-      this.emit("track", event.streams);
+      console.debug("ontrack: ", event);
+      const track = event.track;
+      this._track[track.id] = track;
     };
   }
 
@@ -49,4 +52,20 @@ export class SubscribeTransport extends EventEmitter {
       this._queue.push(candidate);
     }
   }
+
+  public async subscribe(publisherId: string): Promise<MediaStreamTrack> {
+    return new Promise(async (resolve, reject) => {
+      for (let i = 0; i < 10; i++) {
+        if (this._track[publisherId]) {
+          return resolve(this._track[publisherId]);
+        }
+        await sleep(500);
+      }
+      reject("Publisher was not found");
+    });
+  }
+}
+
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
