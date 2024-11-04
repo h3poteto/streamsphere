@@ -1,0 +1,15 @@
+{
+  "name": "rheomesh",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "",
+  "main": "src/index.ts",
+  "license": "Apache 2.0",
+  "dependencies": {
+    "events": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/events": "^3"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "target": "ES2020",
+    "lib": ["DOM", "DOM.Iterable", "ES2021"],
+    "declaration": true,
+    "outDir": "./lib",
+    "rootDir": "./",
+    "removeComments": true,
+    "downlevelIteration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "bundler",
+    "baseUrl": "./",
+    "esModuleInterop": true
+  },
+  "include": ["./src", "./test"],
+  "exclude": ["node_modules"]
+}

@@ -1,5 +1,7 @@
-let publishPeer: RTCPeerConnection;
-let subscribePeer: RTCPeerConnection;
+import { PublishTransport, SubscribeTransport } from "rheomesh";
+
+let publishTransport: PublishTransport;
+let subscribeTransport: SubscribeTransport;
 
 let localVideo: HTMLVideoElement;
 let remoteVideo: HTMLVideoElement;
@@ -11,13 +13,6 @@ let captureButton: HTMLButtonElement;
 let stopButton: HTMLButtonElement;
 
 let ws: WebSocket;
-
-let queue: Array<any> = [];
-
-const offerOptions: RTCOfferOptions = {
-  offerToReceiveVideo: false,
-  offerToReceiveAudio: false,
-};
 
 const peerConnectionConfig: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -97,69 +92,48 @@ async function stop() {
 }
 
 function startPublishPeer() {
-  if (!publishPeer) {
-    publishPeer = new RTCPeerConnection(peerConnectionConfig);
+  if (!publishTransport) {
+    publishTransport = new PublishTransport(peerConnectionConfig);
     ws.send(JSON.stringify({ action: "PublisherInit" }));
-    publishPeer.onicecandidate = (event) => {
-      if (event.candidate) {
-        ws.send(
-          JSON.stringify({
-            action: "PublisherIce",
-            candidate: event.candidate,
-          }),
-        );
-      }
-    };
+    publishTransport.on("icecandidate", (candidate) => {
+      ws.send(
+        JSON.stringify({
+          action: "PublisherIce",
+          candidate: candidate,
+        }),
+      );
+    });
   }
 }
 
 function startSubscribePeer() {
-  if (!subscribePeer) {
-    queue = new Array();
-    subscribePeer = new RTCPeerConnection(peerConnectionConfig);
+  if (!subscribeTransport) {
+    subscribeTransport = new SubscribeTransport(peerConnectionConfig);
     ws.send(JSON.stringify({ action: "SubscriberInit" }));
-    subscribePeer.onicecandidate = (event) => {
-      if (event.candidate) {
-        ws.send(
-          JSON.stringify({
-            action: "SubscriberIce",
-            candidate: event.candidate,
-          }),
-        );
-      }
-    };
-
-    subscribePeer.ontrack = (event) => {
-      console.log("Received remote stream");
-      remoteVideo.srcObject = event.streams[0];
-    };
+    subscribeTransport.on("icecandidate", (candidate) => {
+      ws.send(
+        JSON.stringify({
+          action: "SubscriberIce",
+          candidate: candidate,
+        }),
+      );
+    });
   }
 }
 
-function publish() {
+async function publish() {
   if (localStream) {
+    const offer = await publishTransport.publish(localStream);
+    ws.send(
+      JSON.stringify({
+        action: "Offer",
+        sdp: offer,
+      }),
+    );
     localStream.getTracks().forEach((track) => {
-      publishPeer.addTrack(track, localStream);
+      ws.send(JSON.stringify({ action: "Publish", trackId: track.id }));
     });
   }
-  publishPeer
-    .createOffer(offerOptions)
-    .then(async (offer) => {
-      return publishPeer.setLocalDescription(offer).then(() => {
-        ws.send(
-          JSON.stringify({
-            action: "Offer",
-            sdp: offer,
-          }),
-        );
-      });
-    })
-    .then(() => {
-      localStream.getTracks().forEach((track) => {
-        ws.send(JSON.stringify({ action: "Publish", trackId: track.id }));
-      });
-    })
-    .catch((err) => console.error("Error creating offer: ", err));
 }
 
 function messageHandler(event: MessageEvent) {
@@ -170,35 +144,18 @@ function messageHandler(event: MessageEvent) {
       publish();
       break;
     case "Offer":
-      subscribePeer
-        .setRemoteDescription(message.sdp)
-        .then(() => subscribePeer.createAnswer())
-        .then(async (answer) => {
-          return subscribePeer.setLocalDescription(answer).then(() => {
-            ws.send(JSON.stringify({ action: "Answer", sdp: answer }));
-          });
-        })
-        .catch((err) => console.error(err));
+      subscribeTransport.setOffer(message.sdp).then((answer) => {
+        ws.send(JSON.stringify({ action: "Answer", sdp: answer }));
+      });
       break;
     case "Answer":
-      publishPeer
-        .setRemoteDescription(message.sdp)
-        .catch((err) => console.error(err));
+      publishTransport.setAnswer(message.sdp);
       break;
     case "SubscriberIce":
-      if (subscribePeer.remoteDescription) {
-        subscribePeer
-          .addIceCandidate(new RTCIceCandidate(message.candidate))
-          .catch((err) => console.error("Error adding ice candidate: ", err));
-      } else {
-        queue.push(event);
-        return;
-      }
+      subscribeTransport.addIceCandidate(message.candidate);
       break;
     case "PublisherIce":
-      publishPeer
-        .addIceCandidate(new RTCIceCandidate(message.candidate))
-        .catch((err) => console.error("Error adding ice candidate: ", err));
+      publishTransport.addIceCandidate(message.candidate);
       break;
     case "Published":
       ws.send(
@@ -207,6 +164,10 @@ function messageHandler(event: MessageEvent) {
           publisherId: message.publisherId,
         }),
       );
+      subscribeTransport.subscribe(message.publisherId).then((track) => {
+        const stream = new MediaStream([track]);
+        remoteVideo.srcObject = stream;
+      });
       break;
     case "Subscribed":
       subscriberId = message.subscriberId;
@@ -218,9 +179,5 @@ function messageHandler(event: MessageEvent) {
     default:
       console.error("Unknown message type: ", message);
       break;
-  }
-
-  if (queue.length > 0 && subscribePeer.remoteDescription) {
-    messageHandler(queue.shift());
   }
 }
