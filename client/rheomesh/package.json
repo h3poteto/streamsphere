@@ -1,15 +1,29 @@
 {
   "name": "rheomesh",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "description": "",
-  "main": "src/index.ts",
+  "version": "0.1.0",
+  "description": "WebRTC SFU client-side library for Rheomesh",
+  "main": "./lib/index.js",
+  "typings": "./lib/index.d.ts",
+  "author": "h3poteto",
   "license": "Apache 2.0",
+  "scripts": {
+    "build": "tsc -p ./"
+  },
+  "files": [
+    "/lib/**"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h3poteto/rheomesh.git"
+  },
+  "bugs": {
+    "url": "https://github.com/h3poteto/rheomesh/issues"
+  },
   "dependencies": {
     "events": "^3.3.0"
   },
   "devDependencies": {
-    "@types/events": "^3"
+    "@types/events": "^3",
+    "typescript": "^5.6.3"
   }
 }
