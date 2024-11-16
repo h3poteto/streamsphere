@@ -40,4 +40,18 @@ export class PublishTransport extends EventEmitter {
   public async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
     await this._peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
   }
+
+  public async publishData(): Promise<
+    [RTCDataChannel, RTCSessionDescriptionInit]
+  > {
+    const label = crypto.randomUUID();
+    const channel = this._peerConnection.createDataChannel(label, {
+      ordered: true,
+    });
+
+    const offer = await this._peerConnection.createOffer(offerOptions);
+    await this._peerConnection.setLocalDescription(offer);
+
+    return [channel, offer];
+  }
 }

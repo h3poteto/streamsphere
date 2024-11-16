@@ -210,8 +210,8 @@ impl Handler<ReceivedMessage> for WebSocket {
                         .await;
 
                     let router = room.router.lock().await;
-                    let ids = router.track_ids();
-                    tracing::info!("router track ids {:#?}", ids);
+                    let ids = router.publisher_ids();
+                    tracing::info!("router publisher ids {:#?}", ids);
                     ids.iter().for_each(|id| {
                         address.do_send(SendingMessage::Published {
                             publisher_id: id.to_string(),
@@ -396,7 +396,7 @@ enum SendingMessage {
 #[rtype(result = "()")]
 enum InternalMessage {}
 
-pub struct RoomOwner {
+struct RoomOwner {
     rooms: HashMap<String, Arc<Room>>,
 }
 

@@ -4,6 +4,7 @@ export class SubscribeTransport extends EventEmitter {
   private _peerConnection: RTCPeerConnection;
   private _queue: Array<RTCIceCandidateInit>;
   private _track: { [publisherId: string]: MediaStreamTrack };
+  private _channel: { [publisherId: string]: RTCDataChannel };
 
   constructor(config: RTCConfiguration) {
     super();
@@ -12,6 +13,7 @@ export class SubscribeTransport extends EventEmitter {
     this._peerConnection = peer;
     this._queue = [];
     this._track = {};
+    this._channel = {};
 
     this._peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -23,6 +25,13 @@ export class SubscribeTransport extends EventEmitter {
       console.debug("ontrack: ", event);
       const track = event.track;
       this._track[track.id] = track;
+    };
+
+    this._peerConnection.ondatachannel = (event) => {
+      console.debug("ondatachannel: ", event);
+      if (event.channel.id) {
+        this._channel[event.channel.label] = event.channel;
+      }
     };
   }
 
@@ -62,6 +71,18 @@ export class SubscribeTransport extends EventEmitter {
         await sleep(500);
       }
       reject("Publisher was not found");
+    });
+  }
+
+  public async subscribeData(publisherId: string): Promise<RTCDataChannel> {
+    return new Promise(async (resolve, reject) => {
+      for (let i = 0; i < 10; i++) {
+        if (this._channel[publisherId]) {
+          return resolve(this._channel[publisherId]);
+        }
+        await sleep(500);
+      }
+      reject("Subscriber was not found");
     });
   }
 }

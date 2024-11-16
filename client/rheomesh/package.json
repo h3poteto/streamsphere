@@ -7,6 +7,7 @@
   "author": "h3poteto",
   "license": "Apache-2.0",
   "scripts": {
+    "dev": "tsc --watch",
     "build": "tsc -p ./"
   },
   "files": [
