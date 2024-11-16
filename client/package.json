@@ -2,7 +2,8 @@
   "private": true,
   "workspaces": [
     "rheomesh",
-    "example/media"
+    "example/media",
+    "example/data"
   ],
   "engines": {
     "npm": "use yarn instead"

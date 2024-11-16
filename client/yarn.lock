@@ -482,6 +482,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"data@workspace:example/data":
+  version: 0.0.0-use.local
+  resolution: "data@workspace:example/data"
+  dependencies:
+    rheomesh: "workspace:^"
+    typescript: "npm:^5.2.2"
+    vite: "npm:^5.2.0"
+  languageName: unknown
+  linkType: soft
+
 "debug@npm:4, debug@npm:^4.3.4":
   version: 4.3.7
   resolution: "debug@npm:4.3.7"
@@ -624,16 +634,6 @@ __metadata:
   checksum: 10c0/d6b6f2adbccbcda74ddbab52ed07db727ef52e31a61ed26db9feb7dc62af7fc8e060defa65e5f8af9449b86b52cc1a1f6a79f2eafcf4e62add2b7a1fa4a432f6
   languageName: node
   linkType: hard
-
-"example@workspace:example/media":
-  version: 0.0.0-use.local
-  resolution: "example@workspace:example/media"
-  dependencies:
-    rheomesh: "workspace:^"
-    typescript: "npm:^5.2.2"
-    vite: "npm:^5.2.0"
-  languageName: unknown
-  linkType: soft
 
 "exponential-backoff@npm:^3.1.1":
   version: 3.1.1
@@ -846,6 +846,16 @@ __metadata:
   checksum: 10c0/df5f4dbb6d98153b751bccf4dc4cc500de85a96a9331db9805596c46aa9f99d9555983954e6c1266d9f981ae37a9e4647f42b9a4bb5466f867f4012e582c9e7e
   languageName: node
   linkType: hard
+
+"media@workspace:example/media":
+  version: 0.0.0-use.local
+  resolution: "media@workspace:example/media"
+  dependencies:
+    rheomesh: "workspace:^"
+    typescript: "npm:^5.2.2"
+    vite: "npm:^5.2.0"
+  languageName: unknown
+  linkType: soft
 
 "minimatch@npm:^9.0.4":
   version: 9.0.5

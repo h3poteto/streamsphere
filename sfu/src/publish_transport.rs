@@ -100,10 +100,10 @@ impl PublishTransport {
         ))
     }
 
-    pub async fn data_publish(&self, channel_id: String) -> Result<Arc<DataPublisher>, Error> {
+    pub async fn data_publish(&self, label: String) -> Result<Arc<DataPublisher>, Error> {
         let receiver = self.data_published_receiver.clone();
         while let Ok(data_publisher) = receiver.lock().await.recv().await {
-            if data_publisher.id == channel_id {
+            if data_publisher.label == label {
                 return Ok(data_publisher);
             }
         }
@@ -233,16 +233,16 @@ impl PublishTransport {
         peer.on_data_channel(Box::new(
             enc!((router_sender, data_published_sender) move |dc: Arc<RTCDataChannel>| {
                 Box::pin(enc!((router_sender, data_published_sender) async move {
-                    let id = dc.id().to_string();
-                    tracing::info!("Data channel created: id={}, label={}", id, dc.label());
-
-                    let (data_publisher, closed) = DataPublisher::new(dc);
-
-                    data_published_sender.send(data_publisher.clone()).expect("could not send data published to publisher");
-                    let _ = router_sender.send(RouterEvent::DataPublished(data_publisher));
-
-                    let _ = closed.await;
-                    let _ = router_sender.send(RouterEvent::DataRemoved(id));
+                    let channel = dc.clone();
+                    dc.on_open(Box::new(enc!((channel, router_sender, data_published_sender) move || {
+                        let id = channel.id().to_string();
+                        tracing::info!("DataChannel is opened: id={}, label={}, readyState={}", id, channel.label(), channel.ready_state());
+                        Box::pin(async move {
+                            let data_publisher = Arc::new(DataPublisher::new(channel, router_sender.clone()));
+                            data_published_sender.send(data_publisher.clone()).expect("could not send data published to publisher");
+                            let _ = router_sender.send(RouterEvent::DataPublished(data_publisher));
+                        })
+                    })));
                 }))
             }),
         ));

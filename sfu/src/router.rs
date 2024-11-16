@@ -43,8 +43,16 @@ impl Router {
         router
     }
 
-    pub fn track_ids(&self) -> Vec<String> {
+    pub fn publisher_ids(&self) -> Vec<String> {
         self.publishers
+            .clone()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
+    }
+
+    pub fn data_publisher_ids(&self) -> Vec<String> {
+        self.data_publishers
             .clone()
             .into_iter()
             .map(|(k, _)| k)

@@ -10,6 +10,7 @@ use webrtc::data_channel::{
 pub struct DataSubscriber {
     pub id: String,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
+    data_channel: Arc<RTCDataChannel>,
 }
 
 impl DataSubscriber {
@@ -23,12 +24,14 @@ impl DataSubscriber {
         let (tx, rx) = mpsc::unbounded_channel();
         let closed_receiver = Arc::new(Mutex::new(rx));
 
+        let channel = data_channel.clone();
+
         tokio::spawn(async move {
             let receiver = data_sender.subscribe();
 
             Self::data_event_loop(
                 data_publisher_id,
-                data_channel,
+                channel,
                 receiver,
                 transport_closed,
                 closed_receiver,
@@ -39,6 +42,7 @@ impl DataSubscriber {
         Self {
             id,
             closed_sender: Arc::new(tx),
+            data_channel,
         }
     }
 
@@ -97,6 +101,7 @@ impl DataSubscriber {
         if !self.closed_sender.is_closed() {
             self.closed_sender.send(true).unwrap();
         }
+        let _ = self.data_channel.close().await;
     }
 }
 

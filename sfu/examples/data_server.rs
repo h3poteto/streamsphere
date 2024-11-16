@@ -133,7 +133,18 @@ impl Actor for WebSocket {
         let address = ctx.address();
         let subscribe_transport = self.subscribe_transport.clone();
         let publish_transport = self.publish_transport.clone();
+        // let data_publishers = self.data_publishers.clone();
+        // let data_subscribers = self.data_subscribers.clone();
         actix::spawn(async move {
+            // let publishers = data_publishers.lock().await;
+            // tracing::debug!("Publishers: {:#?}", publishers);
+            // for p in publishers.values() {
+            //     let _ = p.close().await;
+            // }
+            // let subscribers = data_subscribers.lock().await;
+            // for s in subscribers.values() {
+            //     let _ = s.close().await;
+            // }
             subscribe_transport
                 .close()
                 .await
@@ -209,8 +220,8 @@ impl Handler<ReceivedMessage> for WebSocket {
                         .await;
 
                     let router = room.router.lock().await;
-                    let ids = router.track_ids();
-                    tracing::info!("router track ids {:#?}", ids);
+                    let ids = router.data_publisher_ids();
+                    tracing::info!("router data publisher ids {:#?}", ids);
                     ids.iter().for_each(|id| {
                         address.do_send(SendingMessage::Published {
                             publisher_id: id.to_string(),
@@ -276,17 +287,15 @@ impl Handler<ReceivedMessage> for WebSocket {
                         .expect("failed to set answer");
                 });
             }
-            ReceivedMessage::Publish { channel_id } => {
+            ReceivedMessage::Publish { label } => {
                 let room = self.room.clone();
                 let publish_transport = self.publish_transport.clone();
                 let publishers = self.data_publishers.clone();
                 actix::spawn(async move {
-                    match publish_transport.data_publish(channel_id).await {
+                    match publish_transport.data_publish(label).await {
                         Ok(publisher) => {
                             tracing::debug!("published a data channel: {}", publisher.id);
-                            // address.do_send(SendingMessage::Published {
-                            //     track_id: id.clone(),
-                            // });
+
                             let mut p = publishers.lock().await;
                             p.insert(publisher.id.clone(), publisher.clone());
                             room.get_peers(&address).iter().for_each(|peer| {
@@ -356,7 +365,7 @@ enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
-    Publish { channel_id: String },
+    Publish { label: String },
     #[serde(rename_all = "camelCase")]
     StopPublish { publisher_id: String },
     #[serde(rename_all = "camelCase")]
