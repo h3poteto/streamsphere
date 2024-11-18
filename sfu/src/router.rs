@@ -10,7 +10,7 @@ use crate::{
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Router {
     pub id: String,
     publishers: HashMap<String, Arc<Publisher>>,
@@ -125,6 +125,7 @@ impl Router {
     }
 }
 
+#[derive(Debug)]
 pub enum RouterEvent {
     TrackPublished(Arc<Publisher>),
     TrackRemoved(String),

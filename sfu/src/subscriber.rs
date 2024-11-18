@@ -22,7 +22,7 @@ use crate::{
     transport,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Subscriber {
     pub id: String,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use derivative::Derivative;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::data_channel::{
@@ -7,9 +8,12 @@ use webrtc::data_channel::{
     RTCDataChannel,
 };
 
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct DataSubscriber {
     pub id: String,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
+    #[derivative(Debug = "ignore")]
     data_channel: Arc<RTCDataChannel>,
 }
 

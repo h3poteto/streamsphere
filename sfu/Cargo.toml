@@ -1,18 +1,19 @@
 [package]
-name = "streamsphere"
+name = "rheomesh"
 version = "0.1.0"
 edition = "2021"
 authors = ["Akira Fukushima <h3.poteto@gmail.com>"]
 description = "WebRTC SFU server-side library for Rust."
 license = "MIT"
-repository = "https://github.com/h3poteto/streamsphere"
-homepage = "https://github.com/h3poteto/streamsphere"
+repository = "https://github.com/h3poteto/rheomesh"
+homepage = "https://github.com/h3poteto/rheomesh"
 
 [dependencies]
 actix = "0.13.5"
 actix-web = "4.9.0"
 actix-web-actors = "4.3.1"
 chrono = "0.4.38"
+derivative = "2.2.0"
 enclose = "1.2.0"
 rand = "0.8.5"
 serde = { version = "1.0.210", features = ["derive"]}

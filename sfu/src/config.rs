@@ -1,13 +1,16 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{fmt::Debug, net::IpAddr, sync::Arc, time::Duration};
 
+use derivative::Derivative;
 use webrtc::{
     api::setting_engine::SettingEngine, peer_connection::configuration::RTCConfiguration,
     rtp_transceiver::rtp_codec::RTCRtpCodecParameters, sdp::extmap,
 };
 use webrtc_ice::network_type::NetworkType;
 
-#[derive(Clone)]
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct WebRTCTransportConfig {
+    #[derivative(Debug = "ignore")]
     pub configuration: RTCConfiguration,
     pub announced_ips: Vec<IpAddr>,
     pub ice_disconnected_timeout: Option<Duration>,
@@ -76,7 +79,7 @@ impl WebRTCTransportConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MediaConfig {
     pub codec: CodecConfig,
     pub header_extension: HeaderExtensionConfig,
@@ -91,7 +94,7 @@ impl Default for MediaConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CodecConfig {
     pub audio: Vec<RTCRtpCodecParameters>,
     pub video: Vec<RTCRtpCodecParameters>,
@@ -106,7 +109,7 @@ impl Default for CodecConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HeaderExtensionConfig {
     pub audio: Vec<String>,
     pub video: Vec<String>,
