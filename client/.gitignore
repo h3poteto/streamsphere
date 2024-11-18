@@ -1,4 +1,4 @@
-.yarn/
-!.yarn/release/*
 node_modules
 lib
+.yarn/*
+!.yarn/releases
