@@ -70,14 +70,14 @@ Please send `candidate` to server. The corresponding server-side handler is [her
 #### Handle `RTCIceCandidateInit`
 `candidateInit` will be come from [here](/sfu/README.md#bind-on_ice_candidate-and-on_negotiation_needed-callback).
 ```typescript
-subscribeTransport.addIceCandidate(message.candidate)
+subscribeTransport.addIceCandidate(candidateInit)
 ```
 
 #### Handle `offer` message
 `offer` message sill be come from [here](/sfu/README.md#subscribe).
 
 ```typescript
-subscribeTransport.setOffer(message.sdp).then((answer) => {
+subscribeTransport.setOffer(offer).then((answer) => {
   // Send `answer` to server. The server have to call `set_answer` method with this parameter.
 })
 ```
