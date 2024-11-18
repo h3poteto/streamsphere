@@ -2,13 +2,14 @@
 Rheomesh is a WebRTC SFU library that provides a simple API for building real-time communication applications. This provides an SDK to help you build a WebRTC SFU server.
 [Here](examples/media_server.rs) is an example SFU server for video streaming.
 
-## Usage
+## Install
 Add your `Cargo.toml` like this:
 ```
 [dependencies]
 rheomesh = { version = "0" }
 ```
 
+## Usage
 ### Create router and transports
 First of all, please create a router. Router accommodates multiple transports and they can communicate with each other. That means transports belonging to the same Router can send/receive their media. Router is like a meeting room.
 
@@ -51,8 +52,11 @@ publish_transport
   }))
   .await;
 ```
+Please send `init` to client. The corresponding client-side handler is [here](/client/README.md#handle-rtcicecandidateinit).
+
 #### Handle `RTCIceCandidateInit`
-On the other hand, you will receive `RTCIceCandidateInit` message from client when client-side have `onicecandidate` events.
+On the other hand, you will receive `RTCIceCandidateInit` message from client, [here](/client/README.md#bind-icecandidate-events).
+
 ```rust
 let _ = publish_transport
   .add_ice_candidate(candidate)
@@ -60,7 +64,7 @@ let _ = publish_transport
   .expect("failed to add ICE candidate");
 ```
 #### Handle `offer` message
-Then, client sends offer to publish.
+Then, server will receive `offer` from client, the corresponding client-side handler is [here](/client/README.md#publish).
 ```rust
 let answer = publish_transport
   .get_answer(offer)
@@ -68,6 +72,8 @@ let answer = publish_transport
   .expect("failed to connect publish_transport");
 // Send `answer` message to client. The client have to call `setAnswer` method.
 ```
+Please send `answer` to client. The corresponding client-side handler is [here](/client/README.md#handle-answer-message).
+
 #### Publish
 Finally, please handle publish event with `track_id`.
 ```rust
@@ -88,8 +94,11 @@ subscribe_transport
     // Send `offer` message to client. The client have to call `setOffer` method.
   }))
 ```
+Please send `init` to client. The corresponding client-side handler is [here](/client/README.md#handle-rtcicecandidateinit-1).
+
 #### Handle `RTCIceCandidateInit`
-On the other hand, you will receive `RTCIceCandidateInit` message from client when client-side have `onicecandidate` events.
+On the other hand, you will receive `RTCIceCandidateInit` message from client, [here](/client/README.md#bind-icecandidate-events-1).
+
 ```rust
 let _ = subscribe_transport
   .add_ice_candidate(candidate)
@@ -105,8 +114,9 @@ let (subscriber, offer) = subscribe_transport
   .expect("failed to connect subscribe_transport");
 // Send `offer` message to client. The client have to call `setOffer` method.
 ```
+Please send `offer` message to client. The corresponding client-side handler is [here](/client/README.md#handle-offer-message).
 #### Handle `answer` message
-Finally, you will receive `answer` from client after client-side calls `setOffer` method.
+Finally, server will receive `answer` from client, the corresponding client-side handler is [here](client/README.md#handle-offer-message).
 ```rust
 let _ = subscribe_transport
   .set_answer(answer)
