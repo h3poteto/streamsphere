@@ -6,6 +6,12 @@ Rheomesh is a WebRTC SFU ([Selective Forwarding Unit](https://bloggeek.me/webrtc
 This library is under development.
 
 
+## Server-side
+Please refer [server-side document](sfu).
+
+## Client-side
+Please refer [client-side documents](client).
+
 ## Example
 ### Server side
 ```
