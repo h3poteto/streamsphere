@@ -16,7 +16,7 @@ Please refer [client-side documents](client).
 ### Server side
 ```
 $ cd sfu
-$ cargo run --example server
+$ cargo run --example media_server
 ```
 
 WebScoket signaling server will launch with `0.0.0.0:4000`.
@@ -24,7 +24,8 @@ WebScoket signaling server will launch with `0.0.0.0:4000`.
 ### Client side
 ```
 $ cd client
-$ npm run dev
+$ yarn install
+$ yarn workspace media dev
 ```
 
 You can access the frontend service with `localhost:5173`.
