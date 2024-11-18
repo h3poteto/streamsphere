@@ -6,6 +6,7 @@ use crate::{
     router::RouterEvent,
     transport::{OnIceCandidateFn, OnTrackFn, RtcpReceiver, RtcpSender, Transport},
 };
+use derivative::Derivative;
 use enclose::enc;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -18,7 +19,8 @@ use webrtc::{
     track::track_remote::TrackRemote,
 };
 
-#[derive(Clone)]
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct PublishTransport {
     pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
@@ -34,8 +36,10 @@ pub struct PublishTransport {
     stop_sender_channel: Arc<Mutex<mpsc::UnboundedSender<()>>>,
     stop_receiver_channel: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     // For callback fn
+    #[derivative(Debug = "ignore")]
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
-    on_track_fn: Arc<Mutex<OnTrackFn>>,
+    #[derivative(Debug = "ignore")]
+    pub on_track_fn: Arc<Mutex<OnTrackFn>>,
 }
 
 impl PublishTransport {

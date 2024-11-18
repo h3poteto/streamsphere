@@ -13,6 +13,7 @@ actix = "0.13.5"
 actix-web = "4.9.0"
 actix-web-actors = "4.3.1"
 chrono = "0.4.38"
+derivative = "2.2.0"
 enclose = "1.2.0"
 rand = "0.8.5"
 serde = { version = "1.0.210", features = ["derive"]}

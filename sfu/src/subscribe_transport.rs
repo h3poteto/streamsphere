@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use derivative::Derivative;
 use enclose::enc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
@@ -25,7 +26,8 @@ use crate::{
     router::RouterEvent,
 };
 
-#[derive(Clone)]
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct SubscribeTransport {
     pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
@@ -33,7 +35,9 @@ pub struct SubscribeTransport {
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     offer_options: RTCOfferOptions,
     // For callback fn
+    #[derivative(Debug = "ignore")]
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
+    #[derivative(Debug = "ignore")]
     on_negotiation_needed_fn: Arc<Mutex<OnNegotiationNeededFn>>,
     // rtp event
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
