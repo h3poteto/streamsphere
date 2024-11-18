@@ -1,9 +1,9 @@
+# Rheomesh
 [![Build](https://github.com/h3poteto/rheomesh/actions/workflows/build.yml/badge.svg)](https://github.com/h3poteto/rheomesh/actions/workflows/build.yml)
 [![docs.rs](https://img.shields.io/docsrs/rheomesh/latest)](https://docs.rs/rheomesh/latest/rheomesh/)
 [![Crates.io](https://img.shields.io/crates/v/rheomesh)](https://crates.io/crates/rheomesh)
 [![GitHub](https://img.shields.io/github/license/h3poteto/rheomesh)](https://github.com/h3poteto/rheomesh/LICENSE)
 
-# Rheomesh
 Rheomesh is a WebRTC SFU library that provides a simple API for building real-time communication applications. This provides an SDK to help you build a WebRTC SFU server.
 [Here](examples/media_server.rs) is an example SFU server for video streaming.
 
