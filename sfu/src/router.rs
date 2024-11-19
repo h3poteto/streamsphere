@@ -10,6 +10,7 @@ use crate::{
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
+/// Router accommodates multiple transports and they can communicate with each other. That means transports belonging to the same Router can send/receive their media. Router is like a meeting room.
 #[derive(Clone, Debug)]
 pub struct Router {
     pub id: String,
@@ -43,6 +44,7 @@ impl Router {
         router
     }
 
+    /// This returns [`crate::publisher::Publisher`] IDs that has already been published in this router. It is useful when a new user connect to the router and get already published media.
     pub fn publisher_ids(&self) -> Vec<String> {
         self.publishers
             .clone()
@@ -51,6 +53,7 @@ impl Router {
             .collect()
     }
 
+    /// This returns [`crate::data_publisher::DataPublisher`] IDs that has already been published in this router. It is useful when a new user connect to the router and get already published data channels.
     pub fn data_publisher_ids(&self) -> Vec<String> {
         self.data_publishers
             .clone()

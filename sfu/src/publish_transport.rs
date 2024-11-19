@@ -19,6 +19,7 @@ use webrtc::{
     track::track_remote::TrackRemote,
 };
 
+/// This handle [`webrtc::peer_connection::RTCPeerConnection`] methods for publisher.
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
 pub struct PublishTransport {
@@ -83,6 +84,7 @@ impl PublishTransport {
         transport
     }
 
+    /// This sets the offer to the [`webrtc::peer_connection::RTCPeerConnection`] and creates answer sdp for it.
     pub async fn get_answer(
         &self,
         sdp: RTCSessionDescription,
@@ -253,11 +255,13 @@ impl PublishTransport {
     }
 
     // Hooks
+    /// Set callback function when the [`webrtc::peer_connection::RTCPeerConnection`] receives `on_ice_candidate` events.
     pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
         let mut callback = self.on_ice_candidate_fn.lock().await;
         *callback = f;
     }
 
+    /// Set callback function when the [`webrtc::peer_connection::RTCPeerConnection`] receives `on_track` events.
     pub async fn on_track(&mut self, f: OnTrackFn) {
         let mut callback = self.on_track_fn.lock().await;
         *callback = f;

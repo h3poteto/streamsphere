@@ -7,10 +7,11 @@
 
 Rheomesh is a WebRTC SFU ([Selective Forwarding Unit](https://bloggeek.me/webrtcglossary/sfu/)) library written by Rust. This provides an SDK to help you build a WebRTC SFU server. And this provides client-side library with TypeScript.
 
-
-## Current status
-This library is under development.
-
+## Features
+- [x] Video and Audio streaming
+- [x] Data channels
+- [ ] Simulcast
+- [ ] Relay
 
 ## Server-side
 Please refer [server-side document](sfu).
