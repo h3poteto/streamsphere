@@ -12,12 +12,12 @@ pub struct DataPublisher {
     pub id: String,
     pub channel_id: u16,
     pub label: String,
-    pub data_sender: broadcast::Sender<DataChannelMessage>,
+    pub(crate) data_sender: broadcast::Sender<DataChannelMessage>,
     data_channel: Arc<RTCDataChannel>,
 }
 
 impl DataPublisher {
-    pub fn new(
+    pub(crate) fn new(
         data_channel: Arc<RTCDataChannel>,
         router_sender: mpsc::UnboundedSender<RouterEvent>,
     ) -> Self {

@@ -4,7 +4,7 @@ use crate::{
     error::{Error, PublisherErrorKind, TransportErrorKind},
     publisher::Publisher,
     router::RouterEvent,
-    transport::{OnIceCandidateFn, OnTrackFn, RtcpReceiver, RtcpSender, Transport},
+    transport::{OnIceCandidateFn, OnTrackFn, PeerConnection, RtcpReceiver, RtcpSender, Transport},
 };
 use derivative::Derivative;
 use enclose::enc;
@@ -40,11 +40,11 @@ pub struct PublishTransport {
     #[derivative(Debug = "ignore")]
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
     #[derivative(Debug = "ignore")]
-    pub on_track_fn: Arc<Mutex<OnTrackFn>>,
+    on_track_fn: Arc<Mutex<OnTrackFn>>,
 }
 
 impl PublishTransport {
-    pub async fn new(
+    pub(crate) async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
         media_config: MediaConfig,
         transport_config: WebRTCTransportConfig,
@@ -275,6 +275,8 @@ impl PublishTransport {
         Ok(())
     }
 }
+
+impl PeerConnection for PublishTransport {}
 
 impl Transport for PublishTransport {
     async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {
