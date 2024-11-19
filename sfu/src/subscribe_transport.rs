@@ -26,6 +26,7 @@ use crate::{
     router::RouterEvent,
 };
 
+/// This handle [`webrtc::peer_connection::RTCPeerConnection`] methods for subscriber.
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
 pub struct SubscribeTransport {
@@ -82,6 +83,7 @@ impl SubscribeTransport {
         subscriber
     }
 
+    /// This starts subscribing the published media and returns an offer sdp. Please provide a [`crate::publisher::Publisher`] ID.
     pub async fn subscribe(
         &self,
         publisher_id: String,
@@ -112,6 +114,7 @@ impl SubscribeTransport {
         }
     }
 
+    /// This starts subscribing the data channel and returns an offer sdp. Please provide a [`crate::data_publisher::DataPublisher`] ID.
     pub async fn data_subscribe(
         &self,
         data_publisher_id: String,
@@ -158,6 +161,7 @@ impl SubscribeTransport {
         }
     }
 
+    /// This sets the answer to the [`webrtc::peer_connection::RTCPeerConnection`].
     pub async fn set_answer(&self, answer: RTCSessionDescription) -> Result<(), Error> {
         tracing::debug!("subscriber set answer");
         self.peer_connection.set_remote_description(answer).await?;
@@ -280,11 +284,13 @@ impl SubscribeTransport {
     }
 
     // Hooks
+    /// Set callback function when the [`webrtc::peer_connection::RTCPeerConnection`] receives `on_ice_candidate` events.
     pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
         let mut callback = self.on_ice_candidate_fn.lock().await;
         *callback = f;
     }
 
+    /// Set callback function when the [`webrtc::peer_connection::RTCPeerConnection`] receives `on_negotiation_needed` events.
     pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededFn) {
         let mut callback = self.on_negotiation_needed_fn.lock().await;
         *callback = f;

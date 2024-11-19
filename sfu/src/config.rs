@@ -7,6 +7,7 @@ use webrtc::{
 };
 use webrtc_ice::network_type::NetworkType;
 
+/// Configuration for [`crate::publish_transport::PublishTransport`] and [`crate::subscribe_transport::SubscribeTransport`].
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
 pub struct WebRTCTransportConfig {
@@ -79,6 +80,7 @@ impl WebRTCTransportConfig {
     }
 }
 
+/// Media configuration about codec and header extension for [`crate::router::Router`].
 #[derive(Clone, Debug)]
 pub struct MediaConfig {
     pub codec: CodecConfig,
@@ -94,6 +96,7 @@ impl Default for MediaConfig {
     }
 }
 
+/// Media codec configuration for audio and video.
 #[derive(Clone, Debug)]
 pub struct CodecConfig {
     pub audio: Vec<RTCRtpCodecParameters>,
@@ -109,6 +112,7 @@ impl Default for CodecConfig {
     }
 }
 
+/// Header extension configuration for audio and video.
 #[derive(Clone, Debug)]
 pub struct HeaderExtensionConfig {
     pub audio: Vec<String>,

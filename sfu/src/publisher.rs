@@ -12,6 +12,7 @@ use crate::transport;
 
 #[derive(Clone, Debug)]
 pub struct Publisher {
+    /// The ID is the same as published track_id.
     pub id: String,
     pub track: Arc<TrackRemote>,
     _rtp_receiver: Arc<RTCRtpReceiver>,
