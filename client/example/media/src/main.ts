@@ -8,6 +8,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <div class="card">
       <button id="connect" type="button">Connect</button>
       <button id="capture" type="button">Capture</button>
+      <button id="mic" type="button">Mic</button>
       <button id="stop" type="button">Stop</button>
     </div>
     <p class="read-the-docs">

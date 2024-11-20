@@ -5,11 +5,12 @@ let subscribeTransport: SubscribeTransport;
 
 let localVideo: HTMLVideoElement;
 let remoteVideo: HTMLVideoElement;
-let localStream: MediaStream;
-let subscriberId: string;
+let localStreams: Array<MediaStream> = [];
+let subscriberIds: Array<string> = [];
 
 let connectButton: HTMLButtonElement;
 let captureButton: HTMLButtonElement;
+let micButton: HTMLButtonElement;
 let stopButton: HTMLButtonElement;
 
 let ws: WebSocket;
@@ -24,10 +25,13 @@ export function setup() {
 
   connectButton = document.getElementById("connect") as HTMLButtonElement;
   captureButton = document.getElementById("capture") as HTMLButtonElement;
+  micButton = document.getElementById("mic") as HTMLButtonElement;
   stopButton = document.getElementById("stop") as HTMLButtonElement;
   captureButton.disabled = true;
+  micButton.disabled = true;
   stopButton.disabled = true;
   captureButton.addEventListener("click", capture);
+  micButton.addEventListener("click", mic);
   connectButton.addEventListener("click", connect);
   stopButton.addEventListener("click", stop);
 }
@@ -39,6 +43,7 @@ async function connect() {
     console.log("Connected to server");
     connectButton.disabled = true;
     captureButton.disabled = false;
+    micButton.disabled = false;
     stopButton.disabled = false;
     startPublishPeer();
     startSubscribePeer();
@@ -65,29 +70,51 @@ async function capture() {
     });
     console.log("Received local stream");
     localVideo.srcObject = stream;
-    localStream = stream;
-    ws.send(JSON.stringify({ action: "RequestPublish" }));
+    localStreams.push(stream);
+    await publish(stream);
   } catch (e) {
     console.error("Error accessing media devices.", e);
   }
 }
 
+async function mic() {
+  micButton.disabled = true;
+  stopButton.disabled = false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: true,
+    });
+    localStreams.push(stream);
+    await publish(stream);
+  } catch (e) {
+    console.error("Error accessing mic", e);
+  }
+}
+
 async function stop() {
   console.log("Stopping");
-  localStream?.getTracks().forEach((track) => {
-    ws.send(JSON.stringify({ action: "StopPublish", publisherId: track.id }));
-    track.stop();
+  localStreams.forEach((stream) => {
+    stream.getTracks().forEach((track) => {
+      ws.send(JSON.stringify({ action: "StopPublish", publisherId: track.id }));
+      track.stop();
+    });
   });
-  if (subscriberId) {
+
+  subscriberIds.forEach((id) => {
     ws.send(
       JSON.stringify({
         action: "StopSubscribe",
-        subscriberId: subscriberId,
+        subscriberId: id,
       }),
     );
-  }
+  });
+  localStreams = [];
+  subscriberIds = [];
+  localVideo.srcObject = null;
   stopButton.disabled = true;
   captureButton.disabled = false;
+  micButton.disabled = false;
   connectButton.disabled = true;
 }
 
@@ -121,28 +148,23 @@ function startSubscribePeer() {
   }
 }
 
-async function publish() {
-  if (localStream) {
-    const offer = await publishTransport.publish(localStream);
-    ws.send(
-      JSON.stringify({
-        action: "Offer",
-        sdp: offer,
-      }),
-    );
-    localStream.getTracks().forEach((track) => {
-      ws.send(JSON.stringify({ action: "Publish", trackId: track.id }));
-    });
-  }
+async function publish(stream: MediaStream) {
+  const offer = await publishTransport.publish(stream);
+  ws.send(
+    JSON.stringify({
+      action: "Offer",
+      sdp: offer,
+    }),
+  );
+  stream.getTracks().forEach((track) => {
+    ws.send(JSON.stringify({ action: "Publish", trackId: track.id }));
+  });
 }
 
 function messageHandler(event: MessageEvent) {
   console.debug("Received message: ", event.data);
   const message = JSON.parse(event.data);
   switch (message.action) {
-    case "StartAsPublisher":
-      publish();
-      break;
     case "Offer":
       subscribeTransport.setOffer(message.sdp).then((answer) => {
         ws.send(JSON.stringify({ action: "Answer", sdp: answer }));
@@ -165,12 +187,13 @@ function messageHandler(event: MessageEvent) {
         }),
       );
       subscribeTransport.subscribe(message.publisherId).then((track) => {
+        // TODO: Handle audio track
         const stream = new MediaStream([track]);
         remoteVideo.srcObject = stream;
       });
       break;
     case "Subscribed":
-      subscriberId = message.subscriberId;
+      subscriberIds.push(message.subscriberId);
       stopButton.disabled = false;
       break;
     case "Pong":
