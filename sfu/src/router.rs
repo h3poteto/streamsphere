@@ -78,7 +78,7 @@ impl Router {
         SubscribeTransport::new(tx, self.media_config.clone(), transport_config).await
     }
 
-    pub async fn router_event_loop(
+    pub(crate) async fn router_event_loop(
         id: String,
         router: Arc<Mutex<Router>>,
         mut event_receiver: mpsc::UnboundedReceiver<RouterEvent>,
@@ -129,7 +129,7 @@ impl Router {
 }
 
 #[derive(Debug)]
-pub enum RouterEvent {
+pub(crate) enum RouterEvent {
     TrackPublished(Arc<Publisher>),
     TrackRemoved(String),
     DataPublished(Arc<DataPublisher>),

@@ -21,15 +21,15 @@ use crate::{
     error::Error,
 };
 
-pub type RtcpSender = mpsc::UnboundedSender<Box<dyn rtcp::packet::Packet + Send + Sync>>;
-pub type RtcpReceiver = mpsc::UnboundedReceiver<Box<dyn rtcp::packet::Packet + Send + Sync>>;
+pub(crate) type RtcpSender = mpsc::UnboundedSender<Box<dyn rtcp::packet::Packet + Send + Sync>>;
+pub(crate) type RtcpReceiver = mpsc::UnboundedReceiver<Box<dyn rtcp::packet::Packet + Send + Sync>>;
 
 pub type OnIceCandidateFn = Box<dyn Fn(RTCIceCandidate) + Send + Sync>;
 pub type OnNegotiationNeededFn = Box<dyn Fn(RTCSessionDescription) + Send + Sync>;
 pub type OnTrackFn =
     Box<dyn Fn(Arc<TrackRemote>, Arc<RTCRtpReceiver>, Arc<RTCRtpTransceiver>) + Send + Sync>;
 
-pub trait Transport {
+pub(crate) trait PeerConnection {
     fn generate_peer_connection(
         media_config: MediaConfig,
         transport_config: WebRTCTransportConfig,
@@ -80,7 +80,9 @@ pub trait Transport {
             Ok(peer_connection)
         }
     }
+}
 
+pub trait Transport {
     fn add_ice_candidate(
         &self,
         candidate: RTCIceCandidateInit,

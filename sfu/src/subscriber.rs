@@ -29,7 +29,7 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
-    pub fn new(
+    pub(crate) fn new(
         rtcp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
         mime_type: String,
@@ -66,7 +66,7 @@ impl Subscriber {
         subscriber
     }
 
-    pub async fn rtcp_event_loop(
+    pub(crate) async fn rtcp_event_loop(
         rtcp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
         mime_type: String,
@@ -142,7 +142,7 @@ impl Subscriber {
         tracing::debug!("Subscriber RTCP event loop finished");
     }
 
-    pub async fn rtp_event_loop(
+    pub(crate) async fn rtp_event_loop(
         track_id: String,
         local_track: Arc<TrackLocalStaticRTP>,
         mut rtp_receiver: broadcast::Receiver<rtp::packet::Packet>,

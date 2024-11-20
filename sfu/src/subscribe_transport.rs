@@ -19,7 +19,7 @@ use crate::config::{MediaConfig, WebRTCTransportConfig};
 use crate::data_publisher::DataPublisher;
 use crate::data_subscriber::DataSubscriber;
 use crate::subscriber::Subscriber;
-use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, Transport};
+use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, PeerConnection, Transport};
 use crate::{
     error::{Error, SubscriberErrorKind},
     publisher::Publisher,
@@ -46,7 +46,7 @@ pub struct SubscribeTransport {
 }
 
 impl SubscribeTransport {
-    pub async fn new(
+    pub(crate) async fn new(
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
         media_config: MediaConfig,
         transport_config: WebRTCTransportConfig,
@@ -303,6 +303,8 @@ impl SubscribeTransport {
         Ok(())
     }
 }
+
+impl PeerConnection for SubscribeTransport {}
 
 impl Transport for SubscribeTransport {
     async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<(), Error> {

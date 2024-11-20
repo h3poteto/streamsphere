@@ -18,7 +18,7 @@ pub struct DataSubscriber {
 }
 
 impl DataSubscriber {
-    pub fn new(
+    pub(crate) fn new(
         data_publisher_id: String,
         data_channel: Arc<RTCDataChannel>,
         data_sender: broadcast::Sender<DataChannelMessage>,
@@ -50,7 +50,7 @@ impl DataSubscriber {
         }
     }
 
-    pub async fn data_event_loop(
+    pub(crate) async fn data_event_loop(
         source_channel_id: String,
         data_channel: Arc<RTCDataChannel>,
         mut data_receiver: broadcast::Receiver<DataChannelMessage>,

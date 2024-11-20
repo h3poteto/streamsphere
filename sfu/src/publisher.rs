@@ -17,13 +17,13 @@ pub struct Publisher {
     pub track: Arc<TrackRemote>,
     _rtp_receiver: Arc<RTCRtpReceiver>,
     _rtp_transceiver: Arc<RTCRtpTransceiver>,
-    pub rtcp_sender: Arc<transport::RtcpSender>,
-    pub rtp_sender: broadcast::Sender<Packet>,
+    pub(crate) rtcp_sender: Arc<transport::RtcpSender>,
+    pub(crate) rtp_sender: broadcast::Sender<Packet>,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
 }
 
 impl Publisher {
-    pub fn new(
+    pub(crate) fn new(
         track: Arc<TrackRemote>,
         rtp_receiver: Arc<RTCRtpReceiver>,
         rtp_transceiver: Arc<RTCRtpTransceiver>,
