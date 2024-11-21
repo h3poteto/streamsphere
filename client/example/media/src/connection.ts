@@ -5,6 +5,7 @@ let subscribeTransport: SubscribeTransport;
 
 let localVideo: HTMLVideoElement;
 let remoteVideo: HTMLVideoElement;
+let remoteAudio: HTMLAudioElement;
 let localStreams: Array<MediaStream> = [];
 let subscriberIds: Array<string> = [];
 
@@ -22,6 +23,7 @@ const peerConnectionConfig: RTCConfiguration = {
 export function setup() {
   localVideo = document.getElementById("localVideo") as HTMLVideoElement;
   remoteVideo = document.getElementById("remoteVideo") as HTMLVideoElement;
+  remoteAudio = document.getElementById("remoteAudio") as HTMLAudioElement;
 
   connectButton = document.getElementById("connect") as HTMLButtonElement;
   captureButton = document.getElementById("capture") as HTMLButtonElement;
@@ -187,9 +189,12 @@ function messageHandler(event: MessageEvent) {
         }),
       );
       subscribeTransport.subscribe(message.publisherId).then((track) => {
-        // TODO: Handle audio track
         const stream = new MediaStream([track]);
-        remoteVideo.srcObject = stream;
+        if (track.kind === "audio") {
+          remoteAudio.srcObject = stream;
+        } else {
+          remoteVideo.srcObject = stream;
+        }
       });
       break;
     case "Subscribed":
