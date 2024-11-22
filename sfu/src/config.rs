@@ -123,10 +123,10 @@ impl Default for HeaderExtensionConfig {
     fn default() -> Self {
         Self {
             audio: vec![
-                extmap::SDES_MID_URI.to_owned(),
-                extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
-                extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
                 extmap::AUDIO_LEVEL_URI.to_owned(),
+                extmap::ABS_SEND_TIME_URI.to_owned(),
+                extmap::TRANSPORT_CC_URI.to_owned(),
+                extmap::SDES_MID_URI.to_owned(),
             ],
             video: vec![
                 extmap::SDES_MID_URI.to_owned(),
