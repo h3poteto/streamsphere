@@ -5,6 +5,7 @@ export class SubscribeTransport extends EventEmitter {
   private _queue: Array<RTCIceCandidateInit>;
   private _track: { [publisherId: string]: MediaStreamTrack };
   private _channel: { [publisherId: string]: RTCDataChannel };
+  private _signalingLock: boolean;
 
   constructor(config: RTCConfiguration) {
     super();
@@ -14,6 +15,7 @@ export class SubscribeTransport extends EventEmitter {
     this._queue = [];
     this._track = {};
     this._channel = {};
+    this._signalingLock = false;
 
     this._peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -33,13 +35,36 @@ export class SubscribeTransport extends EventEmitter {
         this._channel[event.channel.label] = event.channel;
       }
     };
+
+    this._peerConnection.onsignalingstatechange = (event) => {
+      console.log(
+        "onsignalingstatechange: ",
+        (event.target as RTCPeerConnection).signalingState,
+      );
+      if ((event.target as RTCPeerConnection).signalingState === "stable") {
+        this._signalingLock = false;
+      }
+    };
   }
 
   public async setOffer(
     sdp: RTCSessionDescriptionInit,
   ): Promise<RTCSessionDescriptionInit> {
+    while (this._signalingLock) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    this._signalingLock = true;
+    console.log(
+      "before remoteDescription: ",
+      this._peerConnection.signalingState,
+    );
     await this._peerConnection.setRemoteDescription(sdp);
+    console.log("before answer: ", this._peerConnection.signalingState);
     const answer = await this._peerConnection.createAnswer();
+    console.log(
+      "before localDescription: ",
+      this._peerConnection.signalingState,
+    );
     await this._peerConnection.setLocalDescription(answer);
 
     if (this._queue.length > 0 && this._peerConnection.remoteDescription) {
