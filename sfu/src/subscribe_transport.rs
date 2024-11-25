@@ -8,11 +8,8 @@ use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit}
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 
-use webrtc::{
-    peer_connection::{
-        offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
-    },
-    track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
+use webrtc::peer_connection::{
+    offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
 
 use crate::config::{MediaConfig, WebRTCTransportConfig};
@@ -183,33 +180,13 @@ impl SubscribeTransport {
 
     async fn subscribe_track(&self, publisher: Arc<Publisher>) -> Result<Subscriber, Error> {
         let publisher_rtcp_sender = publisher.rtcp_sender.clone();
-        let track_id = publisher.track.id();
-        let local_track = TrackLocalStaticRTP::new(
-            publisher.track.codec().capability,
-            publisher.track.id(),
-            publisher.track.stream_id(),
-        );
         let mime_type = publisher.track.codec().capability.mime_type;
 
-        let local_track = Arc::new(local_track);
-
+        let local_track = publisher.local_track.clone();
         let rtcp_sender = self.peer_connection.add_track(local_track.clone()).await?;
         let media_ssrc = publisher.track.ssrc();
-        let rtp_buffer = publisher.rtp_sender.clone();
-        let peer = self.peer_connection.clone();
-        let closed_receiver = self.closed_receiver.clone();
 
-        let subscriber = Subscriber::new(
-            rtcp_sender,
-            publisher_rtcp_sender,
-            mime_type,
-            media_ssrc,
-            local_track,
-            rtp_buffer,
-            track_id,
-            closed_receiver,
-            peer,
-        );
+        let subscriber = Subscriber::new(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc);
 
         Ok(subscriber)
     }
