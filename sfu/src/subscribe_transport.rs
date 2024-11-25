@@ -83,32 +83,35 @@ impl SubscribeTransport {
     /// This starts subscribing the published media and returns an offer sdp. Please provide a [`crate::publisher::Publisher`] ID.
     pub async fn subscribe(
         &self,
-        publisher_id: String,
-    ) -> Result<(Subscriber, RTCSessionDescription), Error> {
-        // We have to add a track before creating offer.
-        // https://datatracker.ietf.org/doc/html/rfc3264
-        // https://github.com/webrtc-rs/webrtc/issues/115#issuecomment-1958137875
-        let (tx, rx) = oneshot::channel();
+        publisher_ids: Vec<String>,
+    ) -> Result<(Vec<Subscriber>, RTCSessionDescription), Error> {
+        let mut subscribers = Vec::new();
+        for publisher_id in publisher_ids {
+            // We have to add a track before creating offer.
+            // https://datatracker.ietf.org/doc/html/rfc3264
+            // https://github.com/webrtc-rs/webrtc/issues/115#issuecomment-1958137875
+            let (tx, rx) = oneshot::channel();
 
-        let _ = self
-            .router_event_sender
-            .send(RouterEvent::GetPublisher(publisher_id.clone(), tx));
+            let _ = self
+                .router_event_sender
+                .send(RouterEvent::GetPublisher(publisher_id.clone(), tx));
 
-        let reply = rx.await.unwrap();
-        match reply {
-            None => {
-                return Err(Error::new_subscriber(
-                    format!("Publisher for {} is not found", publisher_id),
-                    SubscriberErrorKind::TrackNotFoundError,
-                ))
-            }
-            Some(publisher) => {
-                let subscriber = self.subscribe_track(publisher).await?;
-
-                let offer = self.create_offer().await?;
-                Ok((subscriber, offer))
+            let reply = rx.await.unwrap();
+            match reply {
+                None => {
+                    return Err(Error::new_subscriber(
+                        format!("Publisher for {} is not found", publisher_id),
+                        SubscriberErrorKind::TrackNotFoundError,
+                    ))
+                }
+                Some(publisher) => {
+                    let subscriber = self.subscribe_track(publisher).await?;
+                    subscribers.push(subscriber)
+                }
             }
         }
+        let offer = self.create_offer().await?;
+        Ok((subscribers, offer))
     }
 
     /// This starts subscribing the data channel and returns an offer sdp. Please provide a [`crate::data_publisher::DataPublisher`] ID.
