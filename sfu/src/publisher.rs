@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use webrtc::rtp::packet::Packet;
 use webrtc::{
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::track_remote::TrackRemote,
 };
 
+use crate::router::RouterEvent;
 use crate::transport;
 
 #[derive(Clone, Debug)]
@@ -28,16 +29,17 @@ impl Publisher {
         rtp_receiver: Arc<RTCRtpReceiver>,
         rtp_transceiver: Arc<RTCRtpTransceiver>,
         rtcp_sender: Arc<transport::RtcpSender>,
-    ) -> (Arc<Self>, oneshot::Receiver<bool>) {
+        router_sender: mpsc::UnboundedSender<RouterEvent>,
+    ) -> Self {
         let id = track.id();
 
-        let (finished_sender, finished_receiver) = oneshot::channel();
         let (rtp_sender, _) = broadcast::channel(1024);
         let (tx, rx) = mpsc::unbounded_channel();
         let closed_receiver = Arc::new(Mutex::new(rx));
+        let cloned_id = id.clone();
         tokio::spawn(enc!((track, rtp_sender) async move {
             Self::rtp_event_loop(track, rtp_sender, closed_receiver).await;
-            let _ = finished_sender.send(true);
+            let _ = router_sender.send(RouterEvent::TrackRemoved(cloned_id));
         }));
 
         tracing::debug!("Publisher {} is created", id);
@@ -52,7 +54,7 @@ impl Publisher {
             closed_sender: Arc::new(tx),
         };
 
-        (Arc::new(publisher), finished_receiver)
+        publisher
     }
 
     async fn rtp_event_loop(
