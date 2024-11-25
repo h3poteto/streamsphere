@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::{broadcast, mpsc, Mutex};
-use webrtc::rtp::packet::Packet;
+use tokio::sync::{mpsc, Mutex};
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::track_remote::TrackRemote,
@@ -19,8 +20,8 @@ pub struct Publisher {
     _rtp_receiver: Arc<RTCRtpReceiver>,
     _rtp_transceiver: Arc<RTCRtpTransceiver>,
     pub(crate) rtcp_sender: Arc<transport::RtcpSender>,
-    pub(crate) rtp_sender: broadcast::Sender<Packet>,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
+    pub(crate) local_track: Arc<TrackLocalStaticRTP>,
 }
 
 impl Publisher {
@@ -33,12 +34,18 @@ impl Publisher {
     ) -> Self {
         let id = track.id();
 
-        let (rtp_sender, _) = broadcast::channel(1024);
+        let local_track = Arc::new(TrackLocalStaticRTP::new(
+            track.codec().capability,
+            track.id(),
+            track.stream_id(),
+        ));
+        let local = local_track.clone();
+
         let (tx, rx) = mpsc::unbounded_channel();
         let closed_receiver = Arc::new(Mutex::new(rx));
         let cloned_id = id.clone();
-        tokio::spawn(enc!((track, rtp_sender) async move {
-            Self::rtp_event_loop(track, rtp_sender, closed_receiver).await;
+        tokio::spawn(enc!((local, track) async move {
+            Self::rtp_event_loop(local, track, closed_receiver).await;
             let _ = router_sender.send(RouterEvent::TrackRemoved(cloned_id));
         }));
 
@@ -50,16 +57,16 @@ impl Publisher {
             _rtp_receiver: rtp_receiver,
             _rtp_transceiver: rtp_transceiver,
             rtcp_sender,
-            rtp_sender,
             closed_sender: Arc::new(tx),
+            local_track,
         };
 
         publisher
     }
 
     async fn rtp_event_loop(
+        local_track: Arc<TrackLocalStaticRTP>,
         track: Arc<TrackRemote>,
-        rtp_sender: broadcast::Sender<Packet>,
         publisher_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     ) {
         let track_id = track.id().clone();
@@ -70,8 +77,6 @@ impl Publisher {
             track.codec().capability.mime_type
         );
 
-        let mut last_timestamp = 0;
-
         loop {
             let mut publisher_closed = publisher_closed.lock().await;
             tokio::select! {
@@ -80,15 +85,7 @@ impl Publisher {
                 }
                 res = track.read_rtp() => {
                     match res {
-                        Ok((mut rtp, _attr)) => {
-                            let old_timestamp = rtp.header.timestamp;
-                            if last_timestamp == 0 {
-                                rtp.header.timestamp = 0
-                            } else {
-                                rtp.header.timestamp -= last_timestamp;
-                            }
-                            last_timestamp = old_timestamp;
-
+                        Ok((rtp, _attr)) => {
                             tracing::trace!(
                                 "Publisher {} received RTP ssrc={} seq={} timestamp={}",
                                 track_id,
@@ -97,10 +94,8 @@ impl Publisher {
                                 rtp.header.timestamp
                             );
 
-                            if rtp_sender.receiver_count() > 0 {
-                                if let Err(e) = rtp_sender.send(rtp) {
-                                    tracing::error!("failed to broadcast rtp: {}", e);
-                                }
+                            if let Err(err) = local_track.write_rtp(&rtp).await {
+                                tracing::error!("failed to write rtp: {}", err);
                             }
                         }
                         Err(err) => {
@@ -111,10 +106,6 @@ impl Publisher {
                 }
             }
         }
-
-        // When the track is finished, we should notify the subscriber
-        // Subscriber should stop rtp_event_loop and rtcp_event_loop after it.
-        drop(rtp_sender);
 
         tracing::debug!(
             "Publisher RTP event loop has finished for {}, {}: {}",
