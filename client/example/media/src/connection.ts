@@ -68,7 +68,7 @@ async function capture() {
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: true,
+      audio: false,
     });
     console.log("Received local stream");
     localVideo.srcObject = stream;
