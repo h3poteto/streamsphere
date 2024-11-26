@@ -26,10 +26,11 @@ pub struct Subscriber {
 
 impl Subscriber {
     pub(crate) fn new(
+        track_id: String,
         rtcp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
         mime_type: String,
-        media_ssrc: u32,
+        original_track_ssrc: u32,
     ) -> Self {
         let id = Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -38,24 +39,33 @@ impl Subscriber {
             closed_sender: Arc::new(tx),
         };
 
+        let original_track_id = track_id.clone();
         tokio::spawn(enc!((rtcp_sender, publisher_rtcp_sender) async move {
-            Self::rtcp_event_loop(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc, rx).await;
+            Self::rtcp_event_loop(original_track_id, rtcp_sender, publisher_rtcp_sender, mime_type, original_track_ssrc, rx).await;
         }));
 
-        tracing::debug!("Subscriber {} is created", subscriber.id);
+        tracing::debug!(
+            "Subscriber id={} is created, track_id={}",
+            subscriber.id,
+            track_id
+        );
         subscriber
     }
 
     pub(crate) async fn rtcp_event_loop(
+        track_id: String,
         rtcp_sender: Arc<RTCRtpSender>,
         publisher_rtcp_sender: Arc<transport::RtcpSender>,
         mime_type: String,
-        media_ssrc: u32,
+        original_track_ssrc: u32,
         mut subscriber_closed: mpsc::UnboundedReceiver<bool>,
     ) {
         let media_type = detect_mime_type(mime_type);
         let start_timestamp = Utc::now();
-        tracing::debug!("Subscriber RTCP event loop has started for {}", media_ssrc);
+        tracing::debug!(
+            "Subscriber RTCP event loop has started for track_id={}",
+            track_id
+        );
 
         loop {
             tokio::select! {
@@ -87,7 +97,7 @@ impl Subscriber {
                                             if let Some(_pli) = rtcp.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>() {
                                                 match publisher_rtcp_sender.send(Box::new(PictureLossIndication {
                                                     sender_ssrc: 0,
-                                                    media_ssrc,
+                                                    media_ssrc: original_track_ssrc,
                                                 })) {
                                                     Ok(_) => tracing::trace!("send rtcp: pli"),
                                                     Err(err) => tracing::error!("failed to send rtcp pli: {}", err)
@@ -129,14 +139,17 @@ impl Subscriber {
 
                         }
                         Err(err) => {
-                            tracing::error!("failed to read rtcp: {}", err);
+                            tracing::error!("failed to read rtcp for track_id={}: {}", track_id, err);
                         }
                     }
                 }
             }
         }
 
-        tracing::debug!("Subscriber RTCP event loop finished");
+        tracing::debug!(
+            "Subscriber RTCP event loop for track_id={} finished",
+            track_id
+        );
     }
 
     pub async fn close(&self) {
@@ -148,6 +161,6 @@ impl Subscriber {
 
 impl Drop for Subscriber {
     fn drop(&mut self) {
-        tracing::debug!("Subscriber {} is dropped", self.id);
+        tracing::debug!("Subscriber id={} is dropped", self.id);
     }
 }

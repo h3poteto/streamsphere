@@ -183,10 +183,17 @@ impl SubscribeTransport {
         let mime_type = publisher.track.codec().capability.mime_type;
 
         let local_track = publisher.local_track.clone();
-        let rtcp_sender = self.peer_connection.add_track(local_track.clone()).await?;
-        let media_ssrc = publisher.track.ssrc();
+        let rtcp_sender = self.peer_connection.add_track(local_track).await?;
+        let original_track_ssrc = publisher.track.ssrc();
+        let track_id = publisher.track.id().clone();
 
-        let subscriber = Subscriber::new(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc);
+        let subscriber = Subscriber::new(
+            track_id,
+            rtcp_sender,
+            publisher_rtcp_sender,
+            mime_type,
+            original_track_ssrc,
+        );
 
         Ok(subscriber)
     }

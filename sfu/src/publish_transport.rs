@@ -214,7 +214,7 @@ impl PublishTransport {
                     let ssrc = track.ssrc();
                     tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
 
-                    let publisher = Arc::new(Publisher::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender, router_sender.clone()));
+                    let publisher = Arc::new(Publisher::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender, router_sender.clone()).await);
 
                     published_sender.send(publisher.clone()).expect("could not send published track id to publisher");
                     let _ = router_sender.send(RouterEvent::TrackPublished(publisher));

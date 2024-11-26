@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use enclose::enc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
@@ -25,7 +25,7 @@ pub struct Publisher {
 }
 
 impl Publisher {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         track: Arc<TrackRemote>,
         rtp_receiver: Arc<RTCRtpReceiver>,
         rtp_transceiver: Arc<RTCRtpTransceiver>,
@@ -33,23 +33,29 @@ impl Publisher {
         router_sender: mpsc::UnboundedSender<RouterEvent>,
     ) -> Self {
         let id = track.id();
-
-        let local_track = Arc::new(TrackLocalStaticRTP::new(
-            track.codec().capability,
-            track.id(),
-            track.stream_id(),
-        ));
-        let local = local_track.clone();
+        let ssrc = track.ssrc();
 
         let (tx, rx) = mpsc::unbounded_channel();
         let closed_receiver = Arc::new(Mutex::new(rx));
         let cloned_id = id.clone();
-        tokio::spawn(enc!((local, track) async move {
-            Self::rtp_event_loop(local, track, closed_receiver).await;
+
+        let (local_track_tx, local_track_rx) = oneshot::channel();
+
+        tokio::spawn(enc!((track) async move {
+            let local_track = Arc::new(TrackLocalStaticRTP::new(
+                track.codec().capability,
+                track.id(),
+                track.stream_id(),
+            ));
+            let _ = local_track_tx.send(local_track.clone());
+
+            Self::rtp_event_loop(local_track, track, closed_receiver).await;
             let _ = router_sender.send(RouterEvent::TrackRemoved(cloned_id));
         }));
 
-        tracing::debug!("Publisher {} is created", id);
+        let local_track = local_track_rx.await.unwrap();
+
+        tracing::debug!("Publisher id={} is created for ssrc={}", id, ssrc);
 
         let publisher = Self {
             id,
@@ -70,9 +76,11 @@ impl Publisher {
         publisher_closed: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     ) {
         let track_id = track.id().clone();
+        let ssrc = track.ssrc();
         tracing::debug!(
-            "Publisher RTP event loop has started for {}, {}: {}",
+            "Publisher RTP event loop has started for track_id={}, ssrc={}, {}: {}",
             track_id,
+            ssrc,
             track.payload_type(),
             track.codec().capability.mime_type
         );
@@ -87,7 +95,7 @@ impl Publisher {
                     match res {
                         Ok((rtp, _attr)) => {
                             tracing::trace!(
-                                "Publisher {} received RTP ssrc={} seq={} timestamp={}",
+                                "Publisher track_id={} received RTP ssrc={} seq={} timestamp={}",
                                 track_id,
                                 rtp.header.ssrc,
                                 rtp.header.sequence_number,
@@ -95,11 +103,11 @@ impl Publisher {
                             );
 
                             if let Err(err) = local_track.write_rtp(&rtp).await {
-                                tracing::error!("failed to write rtp: {}", err);
+                                tracing::error!("failed to write rtp for id={}: {}", track_id, err);
                             }
                         }
                         Err(err) => {
-                            tracing::error!("Publisher failed to read rtp: {}", err);
+                            tracing::error!("Publisher id={} failed to read rtp: {}", track_id, err);
                             break;
                         }
                     }
@@ -108,8 +116,9 @@ impl Publisher {
         }
 
         tracing::debug!(
-            "Publisher RTP event loop has finished for {}, {}: {}",
+            "Publisher RTP event loop has finished for track_id={}, ssrc={}, {}: {}",
             track_id,
+            ssrc,
             track.payload_type(),
             track.codec().capability.mime_type
         );
@@ -135,6 +144,6 @@ pub(crate) enum MediaType {
 
 impl Drop for Publisher {
     fn drop(&mut self) {
-        tracing::debug!("Publisher {} is dropped", self.id);
+        tracing::debug!("Publisher id={} is dropped", self.id);
     }
 }
