@@ -8,13 +8,25 @@ use crate::{
 };
 use derivative::Derivative;
 use enclose::enc;
-use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::{broadcast, mpsc, Mutex},
+    time::sleep,
+};
 use uuid::Uuid;
 use webrtc::{
     data_channel::RTCDataChannel,
     ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
-    peer_connection::{sdp::session_description::RTCSessionDescription, RTCPeerConnection},
+    peer_connection::{
+        sdp::session_description::RTCSessionDescription, signaling_state::RTCSignalingState,
+        RTCPeerConnection,
+    },
     rtp_transceiver::{rtp_receiver::RTCRtpReceiver, RTCRtpTransceiver},
     track::track_remote::TrackRemote,
 };
@@ -41,6 +53,7 @@ pub struct PublishTransport {
     on_ice_candidate_fn: Arc<Mutex<OnIceCandidateFn>>,
     #[derivative(Debug = "ignore")]
     on_track_fn: Arc<Mutex<OnTrackFn>>,
+    signaling_pending: Arc<AtomicBool>,
 }
 
 impl PublishTransport {
@@ -74,6 +87,7 @@ impl PublishTransport {
             stop_receiver_channel: Arc::new(Mutex::new(stop_receiver)),
             on_ice_candidate_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
             on_track_fn: Arc::new(Mutex::new(Box::new(|_, _, _| {}))),
+            signaling_pending: Arc::new(AtomicBool::new(false)),
         };
 
         transport.rtcp_writer_loop();
@@ -123,6 +137,10 @@ impl PublishTransport {
         &self,
         offer: RTCSessionDescription,
     ) -> Result<RTCSessionDescription, Error> {
+        while self.signaling_pending.load(Ordering::Relaxed) {
+            sleep(Duration::from_millis(10)).await;
+        }
+        self.signaling_pending.store(true, Ordering::Relaxed);
         tracing::debug!("publisher set remote description");
         self.peer_connection.set_remote_description(offer).await?;
         let pendings = self.pending_candidates.lock().await;
@@ -248,6 +266,16 @@ impl PublishTransport {
                 }))
             }),
         ));
+
+        let signaling_pending = self.signaling_pending.clone();
+        peer.on_signaling_state_change(Box::new(enc!((signaling_pending) move |state| {
+            tracing::debug!("Signaling state changed: {}", state);
+            if state == RTCSignalingState::Stable {
+                signaling_pending.store(false, Ordering::Relaxed);
+            }
+
+            Box::pin(async {})
+        })));
     }
 
     // Hooks

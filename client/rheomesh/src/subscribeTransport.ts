@@ -37,7 +37,7 @@ export class SubscribeTransport extends EventEmitter {
     };
 
     this._peerConnection.onsignalingstatechange = (event) => {
-      console.log(
+      console.debug(
         "onsignalingstatechange: ",
         (event.target as RTCPeerConnection).signalingState,
       );
@@ -54,17 +54,8 @@ export class SubscribeTransport extends EventEmitter {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     this._signalingLock = true;
-    console.log(
-      "before remoteDescription: ",
-      this._peerConnection.signalingState,
-    );
     await this._peerConnection.setRemoteDescription(sdp);
-    console.log("before answer: ", this._peerConnection.signalingState);
     const answer = await this._peerConnection.createAnswer();
-    console.log(
-      "before localDescription: ",
-      this._peerConnection.signalingState,
-    );
     await this._peerConnection.setLocalDescription(answer);
 
     if (this._queue.length > 0 && this._peerConnection.remoteDescription) {

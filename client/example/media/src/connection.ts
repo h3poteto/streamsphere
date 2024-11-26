@@ -132,6 +132,14 @@ function startPublishPeer() {
         }),
       );
     });
+    publishTransport.on("negotiationneeded", (offer) => {
+      ws.send(
+        JSON.stringify({
+          action: "Offer",
+          sdp: offer,
+        }),
+      );
+    });
   }
 }
 
