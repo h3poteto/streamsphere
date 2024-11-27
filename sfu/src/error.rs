@@ -41,6 +41,8 @@ pub enum TransportErrorKind {
     LocalDescriptionError,
     #[error("ice candidate error")]
     ICECandidateError,
+    #[error("signaling state invalid error")]
+    SignalingStateInvalidError,
 }
 
 #[derive(Debug, thiserror::Error)]

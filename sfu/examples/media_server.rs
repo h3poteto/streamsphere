@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use actix::{Actor, Addr, Message, StreamHandler};
 use actix::{AsyncContext, Handler};
@@ -14,7 +13,6 @@ use rheomesh::subscriber::Subscriber;
 use rheomesh::transport::Transport;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

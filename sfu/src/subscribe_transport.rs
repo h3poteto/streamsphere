@@ -1,8 +1,11 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use derivative::Derivative;
 use enclose::enc;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::sleep;
 use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
@@ -40,6 +43,7 @@ pub struct SubscribeTransport {
     // rtp event
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
     closed_receiver: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
+    signaling_pending: Arc<AtomicBool>,
 }
 
 impl SubscribeTransport {
@@ -69,6 +73,7 @@ impl SubscribeTransport {
             on_negotiation_needed_fn: Arc::new(Mutex::new(Box::new(|_| {}))),
             closed_sender: Arc::new(closed_sender),
             closed_receiver: Arc::new(Mutex::new(closed_receiver)),
+            signaling_pending: Arc::new(AtomicBool::new(false)),
         };
 
         transport.ice_state_hooks().await;
@@ -141,6 +146,11 @@ impl SubscribeTransport {
     }
 
     async fn create_offer(&self) -> Result<RTCSessionDescription, Error> {
+        while self.signaling_pending.load(Ordering::Relaxed) {
+            sleep(Duration::from_millis(10)).await;
+        }
+        self.signaling_pending.store(true, Ordering::Relaxed);
+
         tracing::debug!("subscriber creates offer");
 
         let offer = self
@@ -166,6 +176,7 @@ impl SubscribeTransport {
         tracing::debug!("subscriber set answer");
         self.peer_connection.set_remote_description(answer).await?;
 
+        self.signaling_pending.store(false, Ordering::Relaxed);
         let pendings = self.pending_candidates.lock().await;
         for candidate in pendings.iter() {
             tracing::debug!("Adding pending ICE candidate: {:#?}", candidate);
@@ -186,7 +197,7 @@ impl SubscribeTransport {
         let mime_type = publisher.track.codec().capability.mime_type;
 
         let local_track = publisher.local_track.clone();
-        let rtcp_sender = self.peer_connection.add_track(local_track.clone()).await?;
+        let rtcp_sender = self.peer_connection.add_track(local_track).await?;
         let media_ssrc = publisher.track.ssrc();
 
         let subscriber = Subscriber::new(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc);
@@ -237,17 +248,25 @@ impl SubscribeTransport {
 
         let downgraded_peer = Arc::downgrade(&peer);
         let on_negotiation_needed = Arc::clone(&self.on_negotiation_needed_fn);
-        peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed) move || {
-                Box::pin(enc!( (downgraded_peer, on_negotiation_needed) async move {
+        let signaling_pending = self.signaling_pending.clone();
+        peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) move || {
+                Box::pin(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) async move {
                     tracing::info!("on negotiation needed");
+                    while signaling_pending.load(Ordering::Relaxed) {
+                        sleep(Duration::from_millis(10)).await;
+                    }
                     let locked = on_negotiation_needed.lock().await;
                     if let Some(pc) = downgraded_peer.upgrade() {
                         if pc.connection_state() == RTCPeerConnectionState::Closed {
                                 return;
                         }
-
+                        signaling_pending.store(true, Ordering::Relaxed);
                         let offer = pc.create_offer(None).await.expect("could not create subscriber offer:");
+
+                        let mut gathering_complete = pc.gathering_complete_promise().await;
                         pc.set_local_description(offer).await.expect("could not set local description");
+                        let _ = gathering_complete.recv().await;
+
                         let offer = pc.local_description().await.unwrap();
 
                         tracing::info!("peer sending offer");
