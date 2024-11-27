@@ -129,10 +129,17 @@ impl Default for HeaderExtensionConfig {
                 extmap::SDES_MID_URI.to_owned(),
             ],
             video: vec![
+                "urn:ietf:params:rtp-hdrext:toffset".to_owned(),
+                extmap::ABS_SEND_TIME_URI.to_owned(),
+                extmap::VIDEO_ORIENTATION_URI.to_owned(),
+                extmap::TRANSPORT_CC_URI.to_owned(),
+                "http://www.webrtc.org/experiments/rtp-hdrext/playout-dela".to_owned(),
+                "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type".to_owned(),
+                "http://www.webrtc.org/experiments/rtp-hdrext/video-timing".to_owned(),
+                "http://www.webrtc.org/experiments/rtp-hdrext/color-space".to_owned(),
                 extmap::SDES_MID_URI.to_owned(),
                 extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
                 extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
-                extmap::ABS_SEND_TIME_URI.to_owned(),
             ],
         }
     }

@@ -222,23 +222,27 @@ impl PublishTransport {
         let router_sender = self.router_event_sender.clone();
         let rtcp_sender = self.rtcp_sender_channel.clone();
         let published_sender = self.published_sender.clone();
-        peer.on_track(Box::new(enc!( (on_track, router_sender, rtcp_sender, published_sender)
-            move |track: Arc<TrackRemote>,
-                  receiver: Arc<RTCRtpReceiver>,
-                  transceiver: Arc<RTCRtpTransceiver>| {
-                Box::pin(enc!( (on_track, router_sender, rtcp_sender, published_sender) async move {
-                    let locked = on_track.lock().await;
-                    let id = track.id();
-                    let ssrc = track.ssrc();
-                    tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
+        peer.on_track(
+            Box::new(
+                enc!( (on_track, router_sender, rtcp_sender, published_sender)
+                       move |track: Arc<TrackRemote>,
+                       receiver: Arc<RTCRtpReceiver>,
+                       transceiver: Arc<RTCRtpTransceiver>| {
+                           tokio::spawn(enc!(( on_track, router_sender, rtcp_sender, published_sender ) async move {
+                               let locked = on_track.lock().await;
+                               let id = track.id();
+                               let ssrc = track.ssrc();
+                               tracing::info!("Track published: id={}, ssrc={}", id, ssrc);
 
-                    let publisher = Arc::new(Publisher::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender, router_sender.clone()));
+                               let publisher = Arc::new(Publisher::new(track.clone(), receiver.clone(), transceiver.clone(), rtcp_sender, router_sender.clone()));
 
-                    published_sender.send(publisher.clone()).expect("could not send published track id to publisher");
-                    let _ = router_sender.send(RouterEvent::TrackPublished(publisher));
+                               published_sender.send(publisher.clone()).expect("could not send published track id to publisher");
+                               let _ = router_sender.send(RouterEvent::TrackPublished(publisher));
 
-                    (locked)(track, receiver, transceiver);
-                }))
+                               (locked)(track, receiver, transceiver);
+                           }));
+
+                           Box::pin(async {})
             }
         )));
 

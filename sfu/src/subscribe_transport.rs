@@ -14,6 +14,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::{
     offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 
 use crate::config::{MediaConfig, WebRTCTransportConfig};
 use crate::data_publisher::DataPublisher;
@@ -91,10 +92,8 @@ impl SubscribeTransport {
         publisher_ids: Vec<String>,
     ) -> Result<(Vec<Subscriber>, RTCSessionDescription), Error> {
         let mut subscribers = Vec::new();
+        let mut publishers = Vec::new();
         for publisher_id in publisher_ids {
-            // We have to add a track before creating offer.
-            // https://datatracker.ietf.org/doc/html/rfc3264
-            // https://github.com/webrtc-rs/webrtc/issues/115#issuecomment-1958137875
             let (tx, rx) = oneshot::channel();
 
             let _ = self
@@ -110,10 +109,30 @@ impl SubscribeTransport {
                     ))
                 }
                 Some(publisher) => {
-                    let subscriber = self.subscribe_track(publisher).await?;
-                    subscribers.push(subscriber)
+                    publishers.push(publisher);
                 }
             }
+        }
+        let audio: Vec<Arc<Publisher>> = publishers
+            .clone()
+            .into_iter()
+            .filter(|p| p.track.kind() == RTPCodecType::Audio)
+            .collect();
+        let video: Vec<Arc<Publisher>> = publishers
+            .into_iter()
+            .filter(|p| p.track.kind() == RTPCodecType::Video)
+            .collect();
+
+        // We have to add a track before creating offer.
+        // https://datatracker.ietf.org/doc/html/rfc3264
+        // https://github.com/webrtc-rs/webrtc/issues/115#issuecomment-1958137875
+        for publisher in audio {
+            let subscriber = self.subscribe_track(publisher).await?;
+            subscribers.push(subscriber)
+        }
+        for publisher in video {
+            let subscriber = self.subscribe_track(publisher).await?;
+            subscribers.push(subscriber)
         }
         let offer = self.create_offer().await?;
         Ok((subscribers, offer))

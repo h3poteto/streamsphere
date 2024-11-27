@@ -37,7 +37,7 @@ impl Publisher {
         let local_track = Arc::new(TrackLocalStaticRTP::new(
             track.codec().capability,
             track.id(),
-            track.stream_id(),
+            format!("{}-{}", track.stream_id(), track.payload_type()),
         ));
         let local = local_track.clone();
 
