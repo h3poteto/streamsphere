@@ -57,7 +57,13 @@ export class PublishTransport extends EventEmitter {
     const offer = await this._peerConnection.createOffer(offerOptions);
     await this._peerConnection.setLocalDescription(offer);
 
-    return offer;
+    await this.waitForIceGatheringComplete(this._peerConnection);
+
+    const res = this._peerConnection.localDescription;
+    if (!res) {
+      throw new Error("empty localDescription");
+    }
+    return res;
   }
 
   public async setAnswer(answer: RTCSessionDescription): Promise<void> {
@@ -83,5 +89,24 @@ export class PublishTransport extends EventEmitter {
     await this._peerConnection.setLocalDescription(offer);
 
     return [channel, offer];
+  }
+
+  private waitForIceGatheringComplete(peerConnection: RTCPeerConnection) {
+    return new Promise((resolve) => {
+      if (peerConnection.iceGatheringState === "complete") {
+        resolve(true);
+      } else {
+        const checkState = () => {
+          if (peerConnection.iceGatheringState === "complete") {
+            peerConnection.removeEventListener(
+              "icegatheringstatechange",
+              checkState,
+            );
+            resolve(true);
+          }
+        };
+        peerConnection.addEventListener("icegatheringstatechange", checkState);
+      }
+    });
   }
 }

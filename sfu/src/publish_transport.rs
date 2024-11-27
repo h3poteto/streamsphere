@@ -8,17 +8,11 @@ use crate::{
 };
 use derivative::Derivative;
 use enclose::enc;
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
-use tokio::{
-    sync::{broadcast, mpsc, Mutex},
-    time::sleep,
-};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use uuid::Uuid;
 use webrtc::{
     data_channel::RTCDataChannel,
@@ -137,8 +131,14 @@ impl PublishTransport {
         &self,
         offer: RTCSessionDescription,
     ) -> Result<RTCSessionDescription, Error> {
-        while self.signaling_pending.load(Ordering::Relaxed) {
-            sleep(Duration::from_millis(10)).await;
+        if self.peer_connection.signaling_state() != RTCSignalingState::Stable {
+            return Err(Error::new_transport(
+                format!(
+                    "Signaling state is {}",
+                    self.peer_connection.signaling_state()
+                ),
+                TransportErrorKind::SignalingStateInvalidError,
+            ));
         }
         self.signaling_pending.store(true, Ordering::Relaxed);
         tracing::debug!("publisher set remote description");

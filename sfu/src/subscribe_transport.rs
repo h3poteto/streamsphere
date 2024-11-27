@@ -197,7 +197,7 @@ impl SubscribeTransport {
         let mime_type = publisher.track.codec().capability.mime_type;
 
         let local_track = publisher.local_track.clone();
-        let rtcp_sender = self.peer_connection.add_track(local_track.clone()).await?;
+        let rtcp_sender = self.peer_connection.add_track(local_track).await?;
         let media_ssrc = publisher.track.ssrc();
 
         let subscriber = Subscriber::new(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc);
@@ -262,7 +262,11 @@ impl SubscribeTransport {
                         }
                         signaling_pending.store(true, Ordering::Relaxed);
                         let offer = pc.create_offer(None).await.expect("could not create subscriber offer:");
+
+                        let mut gathering_complete = pc.gathering_complete_promise().await;
                         pc.set_local_description(offer).await.expect("could not set local description");
+                        let _ = gathering_complete.recv().await;
+
                         let offer = pc.local_description().await.unwrap();
 
                         tracing::info!("peer sending offer");
