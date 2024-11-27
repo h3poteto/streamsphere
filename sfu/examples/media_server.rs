@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use actix::{Actor, Addr, Message, StreamHandler};
 use actix::{AsyncContext, Handler};
@@ -13,6 +14,7 @@ use rheomesh::subscriber::Subscriber;
 use rheomesh::transport::Transport;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -212,11 +214,9 @@ impl Handler<ReceivedMessage> for WebSocket {
                     let router = room.router.lock().await;
                     let ids = router.publisher_ids();
                     tracing::info!("router publisher ids {:#?}", ids);
-                    ids.iter().for_each(|id| {
-                        address.do_send(SendingMessage::Published {
-                            publisher_id: id.to_string(),
-                        });
-                    });
+                    if ids.len() > 0 {
+                        address.do_send(SendingMessage::Published { publisher_ids: ids });
+                    }
                 });
             }
 
@@ -251,21 +251,24 @@ impl Handler<ReceivedMessage> for WebSocket {
                 });
             }
             ReceivedMessage::Subscribe {
-                publisher_id: track_id,
+                publisher_ids: track_ids,
             } => {
                 let subscribe_transport = self.subscribe_transport.clone();
                 let subscribers = self.subscribers.clone();
                 actix::spawn(async move {
-                    let (subscriber, offer) = subscribe_transport
-                        .subscribe(track_id)
+                    let (response, offer) = subscribe_transport
+                        .subscribe(track_ids)
                         .await
                         .expect("failed to connect subscribe_transport");
 
-                    let id = subscriber.id.clone();
-                    let mut s = subscribers.lock().await;
-                    s.insert(subscriber.id.clone(), Arc::new(subscriber));
                     address.do_send(SendingMessage::Offer { sdp: offer });
-                    address.do_send(SendingMessage::Subscribed { subscriber_id: id })
+                    address.do_send(SendingMessage::Subscribed {
+                        subscriber_ids: response.iter().map(|s| s.id.clone()).collect(),
+                    });
+                    for subscriber in response.into_iter() {
+                        let mut s = subscribers.lock().await;
+                        s.insert(subscriber.id.clone(), Arc::new(subscriber));
+                    }
                 });
             }
             ReceivedMessage::Answer { sdp } => {
@@ -292,7 +295,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                             p.insert(publisher.id.clone(), publisher.clone());
                             room.get_peers(&address).iter().for_each(|peer| {
                                 peer.do_send(SendingMessage::Published {
-                                    publisher_id: publisher.id.clone(),
+                                    publisher_ids: vec![publisher.id.clone()],
                                 });
                             });
                         }
@@ -359,7 +362,7 @@ enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Offer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
-    Subscribe { publisher_id: String },
+    Subscribe { publisher_ids: Vec<String> },
     #[serde(rename_all = "camelCase")]
     Answer { sdp: RTCSessionDescription },
     #[serde(rename_all = "camelCase")]
@@ -387,9 +390,9 @@ enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     SubscriberIce { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
-    Published { publisher_id: String },
+    Published { publisher_ids: Vec<String> },
     #[serde(rename_all = "camelCase")]
-    Subscribed { subscriber_id: String },
+    Subscribed { subscriber_ids: Vec<String> },
 }
 
 #[derive(Message, Debug)]

@@ -185,20 +185,23 @@ function messageHandler(event: MessageEvent) {
       ws.send(
         JSON.stringify({
           action: "Subscribe",
-          publisherId: message.publisherId,
+          publisherIds: message.publisherIds,
         }),
       );
-      subscribeTransport.subscribe(message.publisherId).then((track) => {
-        const stream = new MediaStream([track]);
-        if (track.kind === "audio") {
-          remoteAudio.srcObject = stream;
-        } else {
-          remoteVideo.srcObject = stream;
-        }
+      message.publisherIds.forEach((id: string) => {
+        subscribeTransport.subscribe(id).then((track) => {
+          const stream = new MediaStream([track]);
+          if (track.kind === "audio") {
+            remoteAudio.srcObject = stream;
+          } else {
+            remoteVideo.srcObject = stream;
+          }
+        });
       });
+
       break;
     case "Subscribed":
-      subscriberIds.push(message.subscriberId);
+      subscriberIds.concat(message.subscriberIds);
       stopButton.disabled = false;
       break;
     case "Pong":
