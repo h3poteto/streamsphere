@@ -45,15 +45,14 @@ export class PublishTransport extends EventEmitter {
   }
 
   public async publish(
-    stream: MediaStream,
+    track: MediaStreamTrack,
   ): Promise<RTCSessionDescriptionInit> {
-    stream.getTracks().forEach((track) => {
-      this._peerConnection.addTrack(track, stream);
-    });
     while (this._signalingLock) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     this._signalingLock = true;
+    this._peerConnection.addTrack(track);
+
     const offer = await this._peerConnection.createOffer(offerOptions);
     await this._peerConnection.setLocalDescription(offer);
 

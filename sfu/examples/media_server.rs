@@ -212,11 +212,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                     let router = room.router.lock().await;
                     let ids = router.publisher_ids();
                     tracing::info!("router publisher ids {:#?}", ids);
-                    ids.iter().for_each(|id| {
-                        address.do_send(SendingMessage::Published {
-                            publisher_id: id.to_string(),
-                        });
-                    });
+                    address.do_send(SendingMessage::Published { publisher_ids: ids });
                 });
             }
 
@@ -292,7 +288,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                             p.insert(publisher.id.clone(), publisher.clone());
                             room.get_peers(&address).iter().for_each(|peer| {
                                 peer.do_send(SendingMessage::Published {
-                                    publisher_id: publisher.id.clone(),
+                                    publisher_ids: vec![publisher.id.clone()],
                                 });
                             });
                         }
@@ -387,7 +383,7 @@ enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     SubscriberIce { candidate: RTCIceCandidateInit },
     #[serde(rename_all = "camelCase")]
-    Published { publisher_id: String },
+    Published { publisher_ids: Vec<String> },
     #[serde(rename_all = "camelCase")]
     Subscribed { subscriber_id: String },
 }

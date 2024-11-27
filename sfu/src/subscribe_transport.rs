@@ -108,6 +108,10 @@ impl SubscribeTransport {
                 ))
             }
             Some(publisher) => {
+                while self.signaling_pending.load(Ordering::Relaxed) {
+                    sleep(Duration::from_millis(10)).await;
+                }
+                self.signaling_pending.store(true, Ordering::Relaxed);
                 let subscriber = self.subscribe_track(publisher).await?;
 
                 let offer = self.create_offer().await?;
@@ -143,11 +147,6 @@ impl SubscribeTransport {
     }
 
     async fn create_offer(&self) -> Result<RTCSessionDescription, Error> {
-        while self.signaling_pending.load(Ordering::Relaxed) {
-            sleep(Duration::from_millis(10)).await;
-        }
-        self.signaling_pending.store(true, Ordering::Relaxed);
-
         tracing::debug!("subscriber creates offer");
 
         let offer = self
