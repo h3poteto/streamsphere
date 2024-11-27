@@ -159,14 +159,14 @@ function startSubscribePeer() {
 }
 
 async function publish(stream: MediaStream) {
-  const offer = await publishTransport.publish(stream);
-  ws.send(
-    JSON.stringify({
-      action: "Offer",
-      sdp: offer,
-    }),
-  );
-  stream.getTracks().forEach((track) => {
+  stream.getTracks().forEach(async (track) => {
+    const offer = await publishTransport.publish(track);
+    ws.send(
+      JSON.stringify({
+        action: "Offer",
+        sdp: offer,
+      }),
+    );
     ws.send(JSON.stringify({ action: "Publish", trackId: track.id }));
   });
 }
@@ -190,20 +190,23 @@ function messageHandler(event: MessageEvent) {
       publishTransport.addIceCandidate(message.candidate);
       break;
     case "Published":
-      ws.send(
-        JSON.stringify({
-          action: "Subscribe",
-          publisherId: message.publisherId,
-        }),
-      );
-      subscribeTransport.subscribe(message.publisherId).then((track) => {
-        const stream = new MediaStream([track]);
-        if (track.kind === "audio") {
-          remoteAudio.srcObject = stream;
-        } else {
-          remoteVideo.srcObject = stream;
-        }
+      message.publisherIds.forEach((publisherId: string) => {
+        ws.send(
+          JSON.stringify({
+            action: "Subscribe",
+            publisherId: publisherId,
+          }),
+        );
+        subscribeTransport.subscribe(publisherId).then((track) => {
+          const stream = new MediaStream([track]);
+          if (track.kind === "audio") {
+            remoteAudio.srcObject = stream;
+          } else {
+            remoteVideo.srcObject = stream;
+          }
+        });
       });
+
       break;
     case "Subscribed":
       subscriberIds.push(message.subscriberId);

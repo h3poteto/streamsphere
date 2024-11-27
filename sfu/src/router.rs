@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct Router {
     pub id: String,
-    publishers: HashMap<String, Arc<Publisher>>,
+    publishers: Vec<(String, Arc<Publisher>)>,
     data_publishers: HashMap<String, Arc<DataPublisher>>,
     router_event_sender: mpsc::UnboundedSender<RouterEvent>,
     media_config: MediaConfig,
@@ -27,7 +27,7 @@ impl Router {
 
         let r = Router {
             id: id.clone(),
-            publishers: HashMap::new(),
+            publishers: Vec::new(),
             data_publishers: HashMap::new(),
             router_event_sender: tx,
             media_config,
@@ -88,15 +88,19 @@ impl Router {
                 RouterEvent::TrackPublished(publisher) => {
                     let mut r = router.lock().await;
                     let track_id = publisher.id.clone();
-                    r.publishers.insert(track_id, publisher);
+                    r.publishers.push((track_id, publisher));
                 }
                 RouterEvent::TrackRemoved(track_id) => {
                     let mut r = router.lock().await;
-                    r.publishers.remove(&track_id);
+                    r.publishers.retain(|(id, _)| *id != track_id);
                 }
                 RouterEvent::GetPublisher(track_id, reply_sender) => {
                     let r = router.lock().await;
-                    let track = r.publishers.get(&track_id);
+                    let track = r
+                        .publishers
+                        .iter()
+                        .find(|(id, _)| *id == track_id)
+                        .map(|(_, publisher)| publisher);
                     let data = track.cloned();
                     let _ = reply_sender.send(data);
                 }
