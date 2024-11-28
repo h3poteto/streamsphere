@@ -1,4 +1,4 @@
-use std::{fmt::Debug, net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, net::IpAddr, sync::Arc, time::Duration};
 
 use derivative::Derivative;
 use webrtc::{
@@ -6,6 +6,8 @@ use webrtc::{
     rtp_transceiver::rtp_codec::RTCRtpCodecParameters, sdp::extmap,
 };
 use webrtc_ice::network_type::NetworkType;
+
+const EXT_TOFFSET: &str = "urn:ietf:params:rtp-hdrext:toffset";
 
 /// Configuration for [`crate::publish_transport::PublishTransport`] and [`crate::subscribe_transport::SubscribeTransport`].
 #[derive(Derivative)]
@@ -129,6 +131,7 @@ impl Default for HeaderExtensionConfig {
                 extmap::SDES_MID_URI.to_owned(),
             ],
             video: vec![
+                EXT_TOFFSET.to_string(),
                 extmap::SDES_MID_URI.to_owned(),
                 extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
                 extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
@@ -136,4 +139,24 @@ impl Default for HeaderExtensionConfig {
             ],
         }
     }
+}
+
+fn extmap_order() -> HashMap<u16, String> {
+    HashMap::from([
+        (1, extmap::AUDIO_LEVEL_URI.to_owned()),
+        (2, extmap::ABS_SEND_TIME_URI.to_owned()),
+        (3, extmap::TRANSPORT_CC_URI.to_owned()),
+        (4, extmap::SDES_MID_URI.to_owned()),
+        (10, extmap::SDES_RTP_STREAM_ID_URI.to_owned()),
+        (11, extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned()),
+        (13, extmap::VIDEO_ORIENTATION_URI.to_owned()),
+        (14, EXT_TOFFSET.to_string()),
+    ])
+}
+
+pub(crate) fn find_extmap_order(uri: &str) -> Option<u16> {
+    extmap_order()
+        .into_iter()
+        .find(|(_, v)| v == uri)
+        .map(|(k, _)| k)
 }

@@ -10,12 +10,13 @@ use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
-
 use webrtc::peer_connection::{
     offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
+use webrtc_sdp::attribute_type::{SdpAttribute, SdpAttributeType};
+use webrtc_sdp::parse_sdp;
 
-use crate::config::{MediaConfig, WebRTCTransportConfig};
+use crate::config::{find_extmap_order, MediaConfig, WebRTCTransportConfig};
 use crate::data_publisher::DataPublisher;
 use crate::data_subscriber::DataSubscriber;
 use crate::subscriber::Subscriber;
@@ -159,7 +160,10 @@ impl SubscribeTransport {
         let _ = gathering_complete.recv().await;
 
         match self.peer_connection.local_description().await {
-            Some(offer) => Ok(offer),
+            Some(offer) => {
+                let sdp = Self::adjust_extmap(offer)?;
+                Ok(sdp)
+            }
             None => Err(Error::new_transport(
                 "Failed to set local description".to_string(),
                 crate::error::TransportErrorKind::LocalDescriptionError,
@@ -296,6 +300,33 @@ impl SubscribeTransport {
 
         self.peer_connection.close().await?;
         Ok(())
+    }
+
+    fn adjust_extmap(mut sdp: RTCSessionDescription) -> Result<RTCSessionDescription, Error> {
+        let mut session = parse_sdp(&sdp.sdp, false)?;
+
+        for media in session.media.iter_mut() {
+            let mut found_attr = vec![];
+            for attr in media.get_attributes() {
+                match attr {
+                    SdpAttribute::Extmap(extmap) => {
+                        found_attr.push(extmap.clone());
+                    }
+                    _ => continue,
+                }
+            }
+            media.remove_attribute(SdpAttributeType::Extmap);
+            for attr in found_attr {
+                if let Some(order) = find_extmap_order(&attr.url) {
+                    let mut new_attr = attr.clone();
+                    new_attr.id = order;
+                    let _ = media.add_attribute(SdpAttribute::Extmap(new_attr))?;
+                };
+            }
+        }
+        tracing::trace!("updated session: {:#?}", session);
+        sdp.sdp = session.to_string();
+        Ok(sdp)
     }
 }
 
