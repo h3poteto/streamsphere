@@ -19,6 +19,7 @@ export default function Room() {
   const [connected, setConnected] = useState(false);
   const [localVideo, setLocalVideo] = useState<MediaStream>();
   const [localAudio, setLocalAudio] = useState<MediaStream>();
+  const [subscriberIds, setSubscriberIds] = useState<Array<string>>([]);
 
   const ws = useRef<WebSocket | null>(null);
   const sendingVideoRef = useRef<HTMLVideoElement>(null);
@@ -136,7 +137,7 @@ export default function Room() {
 
         break;
       case "Subscribed":
-        // subscriberIds.push(message.subscriberId);
+        setSubscriberIds((prev) => [...prev, message.subscriberId]);
         break;
       case "Pong":
         console.debug("pong");
@@ -184,6 +185,40 @@ export default function Room() {
     });
   };
 
+  const stop = async () => {
+    localVideo?.getTracks().forEach((track) => {
+      ws.current!.send(
+        JSON.stringify({ action: "StopPublish", publisherId: track.id }),
+      );
+      track.stop();
+    });
+    setLocalVideo(undefined);
+    localAudio?.getTracks().forEach((track) => {
+      ws.current!.send(
+        JSON.stringify({ action: "StopPublish", publisherId: track.id }),
+      );
+      track.stop();
+    });
+    setLocalAudio(undefined);
+
+    subscriberIds.forEach((id) => {
+      ws.current!.send(
+        JSON.stringify({
+          action: "StopSubscribe",
+          subscriberId: id,
+        }),
+      );
+    });
+    setSubscriberIds([]);
+    publishTransport.current?.close();
+    publishTransport.current = undefined;
+    subscribeTransport.current?.close();
+    subscribeTransport.current = undefined;
+    ws.current?.close();
+    ws.current = null;
+    setConnected(false);
+  };
+
   return (
     <div>
       <h1>Room: {room}</h1>
@@ -191,11 +226,17 @@ export default function Room() {
         <button onClick={connect} disabled={connected}>
           Connect
         </button>
-        <button onClick={capture} disabled={localVideo !== undefined}>
+        <button
+          onClick={capture}
+          disabled={localVideo !== undefined || !connected}
+        >
           Capture
         </button>
-        <button onClick={mic} disabled={localAudio !== undefined}>
+        <button onClick={mic} disabled={localAudio !== undefined || !connected}>
           Mic
+        </button>
+        <button onClick={stop} disabled={!connected}>
+          Stop
         </button>
       </div>
       <h3>My Screen</h3>

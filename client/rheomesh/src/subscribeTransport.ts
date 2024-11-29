@@ -101,6 +101,10 @@ export class SubscribeTransport extends EventEmitter {
       reject("Subscriber was not found");
     });
   }
+
+  public close() {
+    this._peerConnection.close();
+  }
 }
 
 function sleep(milliseconds: number) {
