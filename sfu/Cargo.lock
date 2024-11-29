@@ -1841,6 +1841,7 @@ dependencies = [
  "chrono",
  "derivative",
  "enclose",
+ "futures",
  "rand",
  "serde",
  "serde_json",

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use enclose::enc;
 use tokio::sync::{mpsc, Mutex};
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpHeaderExtensionParameters;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::{
@@ -17,7 +18,7 @@ pub struct Publisher {
     /// The ID is the same as published track_id.
     pub id: String,
     pub track: Arc<TrackRemote>,
-    _rtp_receiver: Arc<RTCRtpReceiver>,
+    rtp_receiver: Arc<RTCRtpReceiver>,
     _rtp_transceiver: Arc<RTCRtpTransceiver>,
     pub(crate) rtcp_sender: Arc<transport::RtcpSender>,
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
@@ -54,7 +55,7 @@ impl Publisher {
         let publisher = Self {
             id,
             track,
-            _rtp_receiver: rtp_receiver,
+            rtp_receiver,
             _rtp_transceiver: rtp_transceiver,
             rtcp_sender,
             closed_sender: Arc::new(tx),
@@ -62,6 +63,11 @@ impl Publisher {
         };
 
         publisher
+    }
+
+    pub async fn get_extmap(&self) -> Vec<RTCRtpHeaderExtensionParameters> {
+        let params = self.rtp_receiver.get_parameters().await;
+        params.header_extensions
     }
 
     async fn rtp_event_loop(

@@ -7,8 +7,10 @@ use crate::{
     publisher::Publisher,
     subscribe_transport::SubscribeTransport,
 };
+use futures::future;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpHeaderExtensionParameters;
 
 /// Router accommodates multiple transports and they can communicate with each other. That means transports belonging to the same Router can send/receive their media. Router is like a meeting room.
 #[derive(Clone, Debug)]
@@ -109,6 +111,17 @@ impl Router {
                     let data_id = data_publisher.id.clone();
                     r.data_publishers.insert(data_id, data_publisher);
                 }
+                RouterEvent::GetPublishersExtmap(reply_sender) => {
+                    let r = router.lock().await;
+                    let tasks = r
+                        .publishers
+                        .clone()
+                        .into_iter()
+                        .map(|(id, publisher)| Router::get_extmap(id, publisher));
+                    let extmap: HashMap<String, Vec<RTCRtpHeaderExtensionParameters>> =
+                        future::join_all(tasks).await.into_iter().collect();
+                    let _ = reply_sender.send(extmap);
+                }
                 RouterEvent::DataRemoved(data_publisher_id) => {
                     let mut r = router.lock().await;
                     r.data_publishers.remove(&data_publisher_id);
@@ -130,6 +143,14 @@ impl Router {
     pub fn close(&self) {
         let _ = self.router_event_sender.send(RouterEvent::Closed);
     }
+
+    async fn get_extmap(
+        id: String,
+        publisher: Arc<Publisher>,
+    ) -> (String, Vec<RTCRtpHeaderExtensionParameters>) {
+        let extmap = publisher.get_extmap().await;
+        (id, extmap)
+    }
 }
 
 #[derive(Debug)]
@@ -140,6 +161,7 @@ pub(crate) enum RouterEvent {
     DataRemoved(String),
     GetPublisher(String, oneshot::Sender<Option<Arc<Publisher>>>),
     GetDataPublisher(String, oneshot::Sender<Option<Arc<DataPublisher>>>),
+    GetPublishersExtmap(oneshot::Sender<HashMap<String, Vec<RTCRtpHeaderExtensionParameters>>>),
     Closed,
 }
 

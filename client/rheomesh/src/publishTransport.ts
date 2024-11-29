@@ -55,8 +55,7 @@ export class PublishTransport extends EventEmitter {
     this._signalingLock = true;
     this._peerConnection.addTrack(track);
 
-    const init = await this._peerConnection.createOffer(offerOptions);
-    const offer = adjustExtmap(init);
+    const offer = await this._peerConnection.createOffer(offerOptions);
 
     await this._peerConnection.setLocalDescription(offer);
 

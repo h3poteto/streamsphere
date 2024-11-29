@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,10 +14,11 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::{
     offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpHeaderExtensionParameters;
 use webrtc_sdp::attribute_type::{SdpAttribute, SdpAttributeType};
 use webrtc_sdp::parse_sdp;
 
-use crate::config::{find_extmap_order, MediaConfig, WebRTCTransportConfig};
+use crate::config::{MediaConfig, WebRTCTransportConfig};
 use crate::data_publisher::DataPublisher;
 use crate::data_subscriber::DataSubscriber;
 use crate::subscriber::Subscriber;
@@ -161,7 +163,14 @@ impl SubscribeTransport {
 
         match self.peer_connection.local_description().await {
             Some(offer) => {
-                let offer = Self::adjust_extmap(offer)?;
+                let (tx, rx) = oneshot::channel();
+                let _ = self
+                    .router_event_sender
+                    .send(RouterEvent::GetPublishersExtmap(tx));
+
+                let reply = rx.await.unwrap();
+
+                let offer = Self::adjust_extmap(offer, reply)?;
                 Ok(offer)
             }
             None => Err(Error::new_transport(
@@ -250,8 +259,9 @@ impl SubscribeTransport {
         let on_negotiation_needed = Arc::clone(&self.on_negotiation_needed_fn);
         let signaling_pending = self.signaling_pending.clone();
         let offer_options = self.offer_options.clone();
-        peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) move || {
-                Box::pin(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) async move {
+        let router_sender = self.router_event_sender.clone();
+        peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending, router_sender) move || {
+                Box::pin(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending, router_sender) async move {
                     tracing::info!("on negotiation needed");
                     while signaling_pending.load(Ordering::Relaxed) {
                         sleep(Duration::from_millis(10)).await;
@@ -262,8 +272,15 @@ impl SubscribeTransport {
                                 return;
                         }
                         signaling_pending.store(true, Ordering::Relaxed);
+
+                        let (tx, rx) = oneshot::channel();
+                        let _ = router_sender
+                            .send(RouterEvent::GetPublishersExtmap(tx));
+
+                        let reply = rx.await.unwrap();
+
                         let offer = pc.create_offer(Some(offer_options)).await.expect("could not create subscriber offer:");
-                        let offer = Self::adjust_extmap(offer).expect("could not adjust sdp");
+                        let offer = Self::adjust_extmap(offer, reply).expect("could not adjust sdp");
 
                         let mut gathering_complete = pc.gathering_complete_promise().await;
                         pc.set_local_description(offer).await.expect("could not set local description");
@@ -304,10 +321,28 @@ impl SubscribeTransport {
         Ok(())
     }
 
-    fn adjust_extmap(mut sdp: RTCSessionDescription) -> Result<RTCSessionDescription, Error> {
+    fn adjust_extmap(
+        mut sdp: RTCSessionDescription,
+        publishers_extmap: HashMap<String, Vec<RTCRtpHeaderExtensionParameters>>,
+    ) -> Result<RTCSessionDescription, Error> {
         let mut session = parse_sdp(&sdp.sdp, false)?;
 
         for media in session.media.iter_mut() {
+            let msid = match media.get_attribute(SdpAttributeType::Msid) {
+                Some(&SdpAttribute::Msid(ref msid)) => msid.clone(),
+                _ => continue,
+            };
+            let track_id = match msid.appdata {
+                Some(ref appdata) => appdata.clone(),
+                None => continue,
+            };
+
+            tracing::debug!("debug_msid: {:#?}", track_id);
+            let extmaps = match publishers_extmap.get(&track_id) {
+                Some(extmaps) => extmaps,
+                None => continue,
+            };
+
             let mut found_attr = vec![];
             for attr in media.get_attributes() {
                 match attr {
@@ -319,7 +354,7 @@ impl SubscribeTransport {
             }
             media.remove_attribute(SdpAttributeType::Extmap);
             for attr in found_attr {
-                if let Some(order) = find_extmap_order(&attr.url) {
+                if let Some(order) = find_extmap_order(&attr.url, extmaps) {
                     let mut new_attr = attr.clone();
                     new_attr.id = order;
                     let _ = media.add_attribute(SdpAttribute::Extmap(new_attr))?;
@@ -357,22 +392,42 @@ impl Drop for SubscribeTransport {
     }
 }
 
+fn find_extmap_order(url: &str, extmaps: &Vec<RTCRtpHeaderExtensionParameters>) -> Option<u16> {
+    for extmap in extmaps {
+        if extmap.uri == url {
+            match extmap.id.try_into() {
+                Ok(id) => return Some(id),
+                Err(_) => return None,
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod test {
     use std::fs;
 
+    use webrtc::sdp::extmap;
     use webrtc_sdp::attribute_type::SdpAttributeExtmap;
+
+    use crate::config;
 
     use super::*;
 
-    fn check_extmap_index(original_sdp_path: &str, correct_sdp_path: &str) {
+    fn check_extmap_index(
+        publishers_extmap: HashMap<String, Vec<RTCRtpHeaderExtensionParameters>>,
+        original_sdp_path: &str,
+        correct_sdp_path: &str,
+    ) {
         let original = fs::read_to_string(original_sdp_path)
             .expect(format!("failed to open {}", original_sdp_path).as_str());
         let correct = fs::read_to_string(correct_sdp_path)
             .expect(format!("failed to open {}", correct_sdp_path).as_str());
         let mut original_sdp = RTCSessionDescription::default();
         original_sdp.sdp = original;
-        let res = SubscribeTransport::adjust_extmap(original_sdp).expect("failed to adjust extmap");
+        let res = SubscribeTransport::adjust_extmap(original_sdp, publishers_extmap)
+            .expect("failed to adjust extmap");
 
         let correct_session = parse_sdp(&correct, false).expect("failed to parse correct sdp");
         let response_session = parse_sdp(&res.sdp, false).expect("failed to parse response sdp");
@@ -437,7 +492,41 @@ mod test {
 
     #[test]
     fn test_adjust_extmap_video() {
+        let publishers_extmap = HashMap::from([(
+            "b0734cb9-da91-4957-8957-25de07ab05d0".to_owned(),
+            vec![
+                RTCRtpHeaderExtensionParameters {
+                    uri: config::EXT_TOFFSET.to_string(),
+                    id: 14,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::ABS_SEND_TIME_URI.to_owned(),
+                    id: 2,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::VIDEO_ORIENTATION_URI.to_owned(),
+                    id: 13,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::TRANSPORT_CC_URI.to_owned(),
+                    id: 3,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::SDES_MID_URI.to_owned(),
+                    id: 4,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
+                    id: 10,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
+                    id: 11,
+                },
+            ],
+        )]);
         check_extmap_index(
+            publishers_extmap,
             "./test_data/sdp_video_original",
             "./test_data/sdp_video_correct",
         );
@@ -445,7 +534,29 @@ mod test {
 
     #[test]
     fn test_adjust_extmap_audio() {
+        let publishers_extmap = HashMap::from([(
+            "17c3e6ab-4b11-47cb-bcab-8d8b88abe0d7".to_owned(),
+            vec![
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::AUDIO_LEVEL_URI.to_owned(),
+                    id: 1,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::ABS_SEND_TIME_URI.to_owned(),
+                    id: 2,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::TRANSPORT_CC_URI.to_owned(),
+                    id: 3,
+                },
+                RTCRtpHeaderExtensionParameters {
+                    uri: extmap::SDES_MID_URI.to_owned(),
+                    id: 4,
+                },
+            ],
+        )]);
         check_extmap_index(
+            publishers_extmap,
             "./test_data/sdp_audio_original",
             "./test_data/sdp_audio_correct",
         );
@@ -453,7 +564,64 @@ mod test {
 
     #[test]
     fn test_adjust_extmap_audio_video() {
+        let publishers_extmap = HashMap::from([
+            (
+                "9b7db7c1-b108-4c3e-aac8-b81301062ef6".to_owned(),
+                vec![
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::AUDIO_LEVEL_URI.to_owned(),
+                        id: 1,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::ABS_SEND_TIME_URI.to_owned(),
+                        id: 2,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::TRANSPORT_CC_URI.to_owned(),
+                        id: 3,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::SDES_MID_URI.to_owned(),
+                        id: 4,
+                    },
+                ],
+            ),
+            (
+                "0af5300f-99df-490d-8b06-c9f49ef95eb5".to_owned(),
+                vec![
+                    RTCRtpHeaderExtensionParameters {
+                        uri: config::EXT_TOFFSET.to_string(),
+                        id: 14,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::ABS_SEND_TIME_URI.to_owned(),
+                        id: 2,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::VIDEO_ORIENTATION_URI.to_owned(),
+                        id: 13,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::TRANSPORT_CC_URI.to_owned(),
+                        id: 3,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::SDES_MID_URI.to_owned(),
+                        id: 4,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::SDES_RTP_STREAM_ID_URI.to_owned(),
+                        id: 10,
+                    },
+                    RTCRtpHeaderExtensionParameters {
+                        uri: extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
+                        id: 11,
+                    },
+                ],
+            ),
+        ]);
         check_extmap_index(
+            publishers_extmap,
             "./test_data/sdp_audio_video_original",
             "./test_data/sdp_audio_video_correct",
         );
