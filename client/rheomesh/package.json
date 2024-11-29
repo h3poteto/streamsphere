@@ -8,7 +8,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "tsc --watch",
-    "build": "tsc -p ./"
+    "build": "tsc -p ./",
+    "test": "NODE_ENV=test jest -u --maxWorkers=3"
   },
   "files": [
     "/lib/**"
@@ -21,10 +22,43 @@
     "url": "https://github.com/h3poteto/rheomesh/issues"
   },
   "dependencies": {
-    "events": "^3.3.0"
+    "events": "^3.3.0",
+    "sdp-transform": "^2.15.0"
   },
   "devDependencies": {
     "@types/events": "^3",
+    "@types/jest": "^29.5.14",
+    "@types/sdp-transform": "^2",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "jest-worker": "^29.7.0",
+    "ts-jest": "^29.2.5",
     "typescript": "^5.6.3"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "ts",
+      "js"
+    ],
+    "moduleNameMapper": {
+      "^@/(.+)": "<rootDir>/src/$1",
+      "^~/(.+)": "<rootDir>/$1"
+    },
+    "testMatch": [
+      "**/tests/**/*.spec.ts"
+    ],
+    "preset": "ts-jest/presets/default",
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/jest.setup.js"
+    ],
+    "transform": {
+      "^.+\\.(ts|tsx)$": [
+        "ts-jest",
+        {
+          "tsconfig": "tsconfig.json"
+        }
+      ]
+    },
+    "testEnvironment": "jsdom"
   }
 }

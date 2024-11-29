@@ -1,4 +1,6 @@
 import { EventEmitter } from "events";
+import * as sdpTransform from "sdp-transform";
+import { findExtmapOrder } from "./config";
 
 const offerOptions: RTCOfferOptions = {
   offerToReceiveVideo: false,
@@ -53,7 +55,9 @@ export class PublishTransport extends EventEmitter {
     this._signalingLock = true;
     this._peerConnection.addTrack(track);
 
-    const offer = await this._peerConnection.createOffer(offerOptions);
+    const init = await this._peerConnection.createOffer(offerOptions);
+    const offer = adjustExtmap(init);
+
     await this._peerConnection.setLocalDescription(offer);
 
     await this.waitForIceGatheringComplete(this._peerConnection);
@@ -108,4 +112,32 @@ export class PublishTransport extends EventEmitter {
       }
     });
   }
+}
+
+export function adjustExtmap(
+  sdp: RTCSessionDescriptionInit,
+): RTCSessionDescriptionInit {
+  if (!sdp.sdp) {
+    return sdp;
+  }
+  const res = sdpTransform.parse(sdp.sdp);
+
+  const media = res.media.map((media) => {
+    const extmap = media.ext?.map(({ value: index, uri: uri }) => {
+      const order = findExtmapOrder(uri);
+      if (order) {
+        return { value: order, uri: uri };
+      } else {
+        return { value: index, uri: uri };
+      }
+    });
+
+    media.ext = extmap;
+    return media;
+  });
+  res.media = media;
+
+  const str = sdpTransform.write(res);
+  const newSdp = new RTCSessionDescription({ type: sdp.type, sdp: str });
+  return newSdp;
 }

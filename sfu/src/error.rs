@@ -5,6 +5,10 @@ pub enum Error {
     #[error(transparent)]
     WebRTCError(#[from] webrtc::Error),
     #[error(transparent)]
+    SdpParseError(#[from] webrtc_sdp::error::SdpParserError),
+    #[error(transparent)]
+    SdpInternalError(#[from] webrtc_sdp::error::SdpParserInternalError),
+    #[error(transparent)]
     TransportError(#[from] TransportError),
     #[error(transparent)]
     SubscriberError(#[from] SubscriberError),
@@ -43,6 +47,8 @@ pub enum TransportErrorKind {
     ICECandidateError,
     #[error("signaling state invalid error")]
     SignalingStateInvalidError,
+    #[error("extmap parse error")]
+    ExtmapParseError,
 }
 
 #[derive(Debug, thiserror::Error)]
