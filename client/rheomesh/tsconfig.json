@@ -21,7 +21,11 @@
     "noFallthroughCasesInSwitch": true,
     "moduleResolution": "bundler",
     "baseUrl": "./",
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "paths": {
+      "@*": ["src*"],
+      "~*": ["./*"]
+    }
   },
   "include": ["./src", "./test"],
   "exclude": ["node_modules"]

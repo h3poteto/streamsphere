@@ -48,3 +48,6 @@ jobs:
           yarn workspace rheomesh run build
           yarn workspace media run build
           yarn workspace data run build
+      - name: Test
+        run: |
+          yarn workspace rheomesh test

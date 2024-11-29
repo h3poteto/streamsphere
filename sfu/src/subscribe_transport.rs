@@ -161,8 +161,8 @@ impl SubscribeTransport {
 
         match self.peer_connection.local_description().await {
             Some(offer) => {
-                let sdp = Self::adjust_extmap(offer)?;
-                Ok(sdp)
+                let offer = Self::adjust_extmap(offer)?;
+                Ok(offer)
             }
             None => Err(Error::new_transport(
                 "Failed to set local description".to_string(),
@@ -249,6 +249,7 @@ impl SubscribeTransport {
         let downgraded_peer = Arc::downgrade(&peer);
         let on_negotiation_needed = Arc::clone(&self.on_negotiation_needed_fn);
         let signaling_pending = self.signaling_pending.clone();
+        let offer_options = self.offer_options.clone();
         peer.on_negotiation_needed(Box::new(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) move || {
                 Box::pin(enc!( (downgraded_peer, on_negotiation_needed, signaling_pending) async move {
                     tracing::info!("on negotiation needed");
@@ -261,7 +262,8 @@ impl SubscribeTransport {
                                 return;
                         }
                         signaling_pending.store(true, Ordering::Relaxed);
-                        let offer = pc.create_offer(None).await.expect("could not create subscriber offer:");
+                        let offer = pc.create_offer(Some(offer_options)).await.expect("could not create subscriber offer:");
+                        let offer = Self::adjust_extmap(offer).expect("could not adjust sdp");
 
                         let mut gathering_complete = pc.gathering_complete_promise().await;
                         pc.set_local_description(offer).await.expect("could not set local description");
@@ -352,5 +354,108 @@ impl Transport for SubscribeTransport {
 impl Drop for SubscribeTransport {
     fn drop(&mut self) {
         tracing::debug!("SubscribeTransport {} is dropped", self.id);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::fs;
+
+    use webrtc_sdp::attribute_type::SdpAttributeExtmap;
+
+    use super::*;
+
+    fn check_extmap_index(original_sdp_path: &str, correct_sdp_path: &str) {
+        let original = fs::read_to_string(original_sdp_path)
+            .expect(format!("failed to open {}", original_sdp_path).as_str());
+        let correct = fs::read_to_string(correct_sdp_path)
+            .expect(format!("failed to open {}", correct_sdp_path).as_str());
+        let mut original_sdp = RTCSessionDescription::default();
+        original_sdp.sdp = original;
+        let res = SubscribeTransport::adjust_extmap(original_sdp).expect("failed to adjust extmap");
+
+        let correct_session = parse_sdp(&correct, false).expect("failed to parse correct sdp");
+        let response_session = parse_sdp(&res.sdp, false).expect("failed to parse response sdp");
+        for media in response_session.media {
+            let SdpAttribute::Mid(mid) = media
+                .get_attribute(SdpAttributeType::Mid)
+                .expect("failed to find mid")
+            else {
+                todo!()
+            };
+
+            let correct_media = correct_session
+                .media
+                .clone()
+                .into_iter()
+                .find(|m| {
+                    let SdpAttribute::Mid(correct_mid) = m
+                        .get_attribute(SdpAttributeType::Mid)
+                        .expect("failed to find mid")
+                    else {
+                        todo!()
+                    };
+                    correct_mid == mid
+                })
+                .expect("failed to find correct media");
+
+            let correct_extmaps: Vec<SdpAttributeExtmap> = correct_media
+                .get_attributes()
+                .iter()
+                .filter_map(|a| {
+                    if let SdpAttribute::Extmap(extmap) = a {
+                        Some(extmap.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let extmaps: Vec<SdpAttributeExtmap> = media
+                .get_attributes()
+                .iter()
+                .filter_map(|a| {
+                    if let SdpAttribute::Extmap(extmap) = a {
+                        Some(extmap.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for extmap in extmaps.iter() {
+                let correct_extmap = correct_extmaps
+                    .iter()
+                    .find(|e| e.url == extmap.url)
+                    .expect("failed to find correct extmap");
+
+                assert_eq!(extmap.id, correct_extmap.id);
+                assert_eq!(extmap.url, correct_extmap.url);
+            }
+        }
+    }
+
+    #[test]
+    fn test_adjust_extmap_video() {
+        check_extmap_index(
+            "./test_data/sdp_video_original",
+            "./test_data/sdp_video_correct",
+        );
+    }
+
+    #[test]
+    fn test_adjust_extmap_audio() {
+        check_extmap_index(
+            "./test_data/sdp_audio_original",
+            "./test_data/sdp_audio_correct",
+        );
+    }
+
+    #[test]
+    fn test_adjust_extmap_audio_video() {
+        check_extmap_index(
+            "./test_data/sdp_audio_video_original",
+            "./test_data/sdp_audio_video_correct",
+        );
     }
 }
