@@ -94,6 +94,10 @@ export class PublishTransport extends EventEmitter {
     return [channel, offer];
   }
 
+  public close() {
+    this._peerConnection.close();
+  }
+
   private waitForIceGatheringComplete(peerConnection: RTCPeerConnection) {
     return new Promise((resolve) => {
       if (peerConnection.iceGatheringState === "complete") {
