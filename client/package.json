@@ -3,7 +3,8 @@
   "workspaces": [
     "rheomesh",
     "example/media",
-    "example/data"
+    "example/data",
+    "example/multiple"
   ],
   "engines": {
     "npm": "use yarn instead"
