@@ -3778,6 +3778,7 @@ __metadata:
     next: "npm:15.0.3"
     react: "npm:^18.3"
     react-dom: "npm:^18.3"
+    rheomesh: "workspace:^"
     typescript: "npm:^5"
   languageName: unknown
   linkType: soft
