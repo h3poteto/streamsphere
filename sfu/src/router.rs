@@ -73,7 +73,7 @@ impl Router {
     pub async fn create_subscribe_transport(
         &self,
         transport_config: WebRTCTransportConfig,
-    ) -> Arc<SubscribeTransport> {
+    ) -> SubscribeTransport {
         let tx = self.router_event_sender.clone();
         SubscribeTransport::new(tx, self.media_config.clone(), transport_config).await
     }
