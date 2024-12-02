@@ -13,6 +13,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::{
     offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc_sdp::attribute_type::{SdpAttribute, SdpAttributeType};
 use webrtc_sdp::parse_sdp;
 
@@ -196,11 +197,24 @@ impl SubscribeTransport {
         let publisher_rtcp_sender = publisher.rtcp_sender.clone();
         let mime_type = publisher.track.codec().capability.mime_type;
 
-        let local_track = publisher.local_track.clone();
-        let rtcp_sender = self.peer_connection.add_track(local_track).await?;
-        let media_ssrc = publisher.track.ssrc();
+        let local_track = Arc::new(TrackLocalStaticRTP::new(
+            publisher.track.codec().capability,
+            publisher.track.id(),
+            publisher.track.stream_id(),
+        ));
 
-        let subscriber = Subscriber::new(rtcp_sender, publisher_rtcp_sender, mime_type, media_ssrc);
+        let rtcp_sender = self.peer_connection.add_track(local_track.clone()).await?;
+        let media_ssrc = publisher.track.ssrc();
+        let rtp_sender = publisher.rtp_packet_sender.clone();
+
+        let subscriber = Subscriber::new(
+            local_track,
+            rtp_sender,
+            rtcp_sender,
+            publisher_rtcp_sender,
+            mime_type,
+            media_ssrc,
+        );
 
         Ok(subscriber)
     }
