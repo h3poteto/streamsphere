@@ -25,6 +25,6 @@ tracing = "0.1.40"
 tracing-actix-web = "0.7.13"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 uuid = { version = "1.8", features = ["v4"] }
-webrtc = "0.11.0"
-webrtc-ice = "0.11.0"
+webrtc = { git = "https://github.com/webrtc-rs/webrtc", rev = "de46a53cd6ccac2c7aee515265adce47b2a4621f" }
+webrtc-ice = { git = "https://github.com/webrtc-rs/webrtc", rev = "de46a53cd6ccac2c7aee515265adce47b2a4621f" }
 webrtc-sdp = "0.3.13"
