@@ -88,7 +88,7 @@ async fn socket(
 struct WebSocket {
     room: Arc<Room>,
     publish_transport: Arc<rheomesh::publish_transport::PublishTransport>,
-    subscribe_transport: Arc<Mutex<rheomesh::subscribe_transport::SubscribeTransport>>,
+    subscribe_transport: Arc<rheomesh::subscribe_transport::SubscribeTransport>,
     publishers: Arc<Mutex<HashMap<String, Arc<Publisher>>>>,
     subscribers: Arc<Mutex<HashMap<String, Arc<Subscriber>>>>,
 }
@@ -113,7 +113,7 @@ impl WebSocket {
         Self {
             room,
             publish_transport: Arc::new(publish_transport),
-            subscribe_transport: Arc::new(Mutex::new(subscribe_transport)),
+            subscribe_transport: Arc::new(subscribe_transport),
             publishers: Arc::new(Mutex::new(HashMap::new())),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -135,7 +135,6 @@ impl Actor for WebSocket {
         let subscribe_transport = self.subscribe_transport.clone();
         let publish_transport = self.publish_transport.clone();
         actix::spawn(async move {
-            let subscribe_transport = subscribe_transport.lock().await;
             subscribe_transport
                 .close()
                 .await
@@ -198,7 +197,6 @@ impl Handler<ReceivedMessage> for WebSocket {
                 tokio::spawn(async move {
                     let addr = address.clone();
                     let addr2 = address.clone();
-                    let subscribe_transport = subscribe_transport.lock().await;
                     subscribe_transport
                         .on_ice_candidate(Box::new(move |candidate| {
                             let init = candidate.to_json().expect("failed to parse candidate");
@@ -231,7 +229,6 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::SubscriberIce { candidate } => {
                 let subscribe_transport = self.subscribe_transport.clone();
                 actix::spawn(async move {
-                    let subscribe_transport = subscribe_transport.lock().await;
                     let _ = subscribe_transport
                         .add_ice_candidate(candidate)
                         .await
@@ -255,7 +252,6 @@ impl Handler<ReceivedMessage> for WebSocket {
                 let subscribe_transport = self.subscribe_transport.clone();
                 let subscribers = self.subscribers.clone();
                 actix::spawn(async move {
-                    let mut subscribe_transport = subscribe_transport.lock().await;
                     let (subscriber, offer) = subscribe_transport
                         .subscribe(track_id)
                         .await
@@ -271,7 +267,6 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::Answer { sdp } => {
                 let subscribe_transport = self.subscribe_transport.clone();
                 actix::spawn(async move {
-                    let subscribe_transport = subscribe_transport.lock().await;
                     let _ = subscribe_transport
                         .set_answer(sdp)
                         .await

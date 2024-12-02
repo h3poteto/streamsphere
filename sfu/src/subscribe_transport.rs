@@ -50,8 +50,6 @@ pub struct SubscribeTransport {
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
     closed_receiver: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     signaling_pending: Arc<AtomicBool>,
-    // probe
-    already_subscribed: bool,
 }
 
 impl SubscribeTransport {
@@ -82,7 +80,6 @@ impl SubscribeTransport {
             closed_sender: Arc::new(closed_sender),
             closed_receiver: Arc::new(Mutex::new(closed_receiver)),
             signaling_pending: Arc::new(AtomicBool::new(false)),
-            already_subscribed: false,
         };
 
         transport.ice_state_hooks().await;
@@ -94,7 +91,7 @@ impl SubscribeTransport {
 
     /// This starts subscribing the published media and returns an offer sdp. Please provide a [`crate::publisher::Publisher`] ID.
     pub async fn subscribe(
-        &mut self,
+        &self,
         publisher_id: String,
     ) -> Result<(Subscriber, RTCSessionDescription), Error> {
         // We have to add a track before creating offer.
@@ -198,7 +195,7 @@ impl SubscribeTransport {
         Ok(())
     }
 
-    async fn subscribe_track(&mut self, publisher: Arc<Publisher>) -> Result<Subscriber, Error> {
+    async fn subscribe_track(&self, publisher: Arc<Publisher>) -> Result<Subscriber, Error> {
         let publisher_rtcp_sender = publisher.rtcp_sender.clone();
         let mime_type = publisher.track.codec().capability.mime_type;
 
@@ -221,10 +218,9 @@ impl SubscribeTransport {
             media_ssrc,
         );
 
-        if !self.already_subscribed {
-            self.add_probe().await?;
-        }
-        self.already_subscribed = true;
+        if let None = self.peer_connection.current_local_description().await {
+            let _ = self.add_probe().await?;
+        };
 
         Ok(subscriber)
     }
