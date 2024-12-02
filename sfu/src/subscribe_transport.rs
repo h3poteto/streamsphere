@@ -7,19 +7,23 @@ use enclose::enc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::sleep;
 use uuid::Uuid;
+use webrtc::api::media_engine::MIME_TYPE_VP8;
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::{
     offer_answer_options::RTCOfferOptions, sdp::session_description::RTCSessionDescription,
 };
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc_sdp::attribute_type::{SdpAttribute, SdpAttributeType};
 use webrtc_sdp::parse_sdp;
 
 use crate::config::{find_extmap_order, MediaConfig, WebRTCTransportConfig};
 use crate::data_publisher::DataPublisher;
 use crate::data_subscriber::DataSubscriber;
+use crate::prober::Prober;
 use crate::subscriber::Subscriber;
 use crate::transport::{OnIceCandidateFn, OnNegotiationNeededFn, PeerConnection, Transport};
 use crate::{
@@ -46,6 +50,8 @@ pub struct SubscribeTransport {
     closed_sender: Arc<mpsc::UnboundedSender<bool>>,
     closed_receiver: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
     signaling_pending: Arc<AtomicBool>,
+    // probe
+    already_subscribed: bool,
 }
 
 impl SubscribeTransport {
@@ -53,7 +59,7 @@ impl SubscribeTransport {
         router_event_sender: mpsc::UnboundedSender<RouterEvent>,
         media_config: MediaConfig,
         transport_config: WebRTCTransportConfig,
-    ) -> Arc<Self> {
+    ) -> Self {
         let id = Uuid::new_v4().to_string();
 
         let peer_connection = Self::generate_peer_connection(media_config, transport_config)
@@ -76,20 +82,19 @@ impl SubscribeTransport {
             closed_sender: Arc::new(closed_sender),
             closed_receiver: Arc::new(Mutex::new(closed_receiver)),
             signaling_pending: Arc::new(AtomicBool::new(false)),
+            already_subscribed: false,
         };
 
         transport.ice_state_hooks().await;
 
-        let subscriber = Arc::new(transport);
+        tracing::debug!("SubscribeTransport {} is created", transport.id);
 
-        tracing::debug!("SubscribeTransport {} is created", subscriber.id);
-
-        subscriber
+        transport
     }
 
     /// This starts subscribing the published media and returns an offer sdp. Please provide a [`crate::publisher::Publisher`] ID.
     pub async fn subscribe(
-        &self,
+        &mut self,
         publisher_id: String,
     ) -> Result<(Subscriber, RTCSessionDescription), Error> {
         // We have to add a track before creating offer.
@@ -193,7 +198,7 @@ impl SubscribeTransport {
         Ok(())
     }
 
-    async fn subscribe_track(&self, publisher: Arc<Publisher>) -> Result<Subscriber, Error> {
+    async fn subscribe_track(&mut self, publisher: Arc<Publisher>) -> Result<Subscriber, Error> {
         let publisher_rtcp_sender = publisher.rtcp_sender.clone();
         let mime_type = publisher.track.codec().capability.mime_type;
 
@@ -215,6 +220,11 @@ impl SubscribeTransport {
             mime_type,
             media_ssrc,
         );
+
+        if !self.already_subscribed {
+            self.add_probe().await?;
+        }
+        self.already_subscribed = true;
 
         Ok(subscriber)
     }
@@ -239,6 +249,25 @@ impl SubscribeTransport {
         );
 
         Ok(data_subscriber)
+    }
+
+    async fn add_probe(&self) -> Result<(), Error> {
+        let codec = RTCRtpCodecCapability {
+            mime_type: MIME_TYPE_VP8.to_owned(),
+            ..Default::default()
+        };
+        let dummy_track = Arc::new(TrackLocalStaticSample::new(
+            codec,
+            "probator".to_owned(),
+            "webrtc-rs".to_owned(),
+        ));
+        {
+            let dummy_track = dummy_track.clone();
+            let _rtcp_sender = self.peer_connection.add_track(dummy_track).await?;
+        }
+        let _prober = Prober::new(dummy_track);
+
+        Ok(())
     }
 
     async fn ice_state_hooks(&mut self) {

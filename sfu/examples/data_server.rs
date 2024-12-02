@@ -112,7 +112,7 @@ impl WebSocket {
         Self {
             room,
             publish_transport: Arc::new(publish_transport),
-            subscribe_transport,
+            subscribe_transport: Arc::new(subscribe_transport),
             data_publishers: Arc::new(Mutex::new(HashMap::new())),
             data_subscribers: Arc::new(Mutex::new(HashMap::new())),
         }

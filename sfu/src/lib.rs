@@ -14,6 +14,7 @@ pub mod data_publisher;
 /// DataChannel methods for subscriber.
 pub mod data_subscriber;
 pub mod error;
+mod prober;
 /// [`webrtc::peer_connection::RTCPeerConnection`] methods for publisher.
 pub mod publish_transport;
 /// Audio and video methods for publisher.
