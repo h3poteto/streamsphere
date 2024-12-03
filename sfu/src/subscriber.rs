@@ -42,8 +42,17 @@ impl Subscriber {
             let tx = tx.clone();
             let id = id.clone();
             let media_ssrc = media_ssrc.clone();
+            let publisher_rtcp_sender = publisher_rtcp_sender.clone();
             tokio::spawn(async move {
-                Self::rtp_event_loop(id, media_ssrc, local_track, rtp_sender, tx).await;
+                Self::rtp_event_loop(
+                    id,
+                    media_ssrc,
+                    local_track,
+                    rtp_sender,
+                    tx,
+                    publisher_rtcp_sender,
+                )
+                .await;
             });
         }
 
@@ -74,6 +83,7 @@ impl Subscriber {
         local_track: Arc<TrackLocalStaticRTP>,
         rtp_sender: broadcast::Sender<rtp::packet::Packet>,
         subscriber_closed_sender: broadcast::Sender<bool>,
+        publisher_rtcp_sender: Arc<transport::RtcpSender>,
     ) {
         let mut rtp_receiver = rtp_sender.subscribe();
         drop(rtp_sender);
@@ -94,6 +104,9 @@ impl Subscriber {
                     break;
                 }
                 res = rtp_receiver.recv() => {
+                    if publisher_rtcp_sender.is_closed() {
+                        break;
+                    }
                     match res {
                         Ok(mut packet) => {
                             current_timestamp += packet.header.timestamp;
@@ -156,6 +169,9 @@ impl Subscriber {
                     break;
                 }
                 res = rtcp_sender.read_rtcp() => {
+                    if publisher_rtcp_sender.is_closed() {
+                        break;
+                    }
                     match res {
                         Ok((rtcp_packets, attr)) => {
                             for rtcp in rtcp_packets.into_iter() {
@@ -221,11 +237,14 @@ impl Subscriber {
                             }
 
                         }
+                        Err(webrtc::error::Error::ErrDataChannelNotOpen) => {
+                            break;
+                        }
+                        Err(webrtc::error::Error::ErrClosedPipe) => {
+                            break;
+                        }
                         Err(err) => {
-                            tracing::error!("Subscriber id={} failed to read rtcp: {}", id, err);
-                            if webrtc::error::Error::ErrDataChannelNotOpen == err {
-                                break;
-                            }
+                            tracing::error!("Subscriber id={} failed to read rtcp: {:#?}", id, err);
                         }
                     }
                 }

@@ -1784,6 +1784,7 @@ dependencies = [
  "chrono",
  "derivative",
  "enclose",
+ "interceptor",
  "rand",
  "serde",
  "serde_json",
@@ -1796,6 +1797,8 @@ dependencies = [
  "webrtc",
  "webrtc-ice",
  "webrtc-sdp",
+ "webrtc-srtp",
+ "webrtc-util",
 ]
 
 [[package]]
