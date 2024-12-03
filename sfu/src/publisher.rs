@@ -111,8 +111,17 @@ impl Publisher {
                                 }
                             }
                         }
+                        Err(webrtc::error::Error::ErrDataChannelNotOpen) => {
+                            break;
+                        }
+                        Err(webrtc::error::Error::ErrClosedPipe) =>{
+                            break;
+                        }
+                        Err(webrtc::error::Error::Interceptor(interceptor::Error::Srtp(webrtc_srtp::Error::Util(webrtc_util::Error::ErrBufferClosed)))) => {
+                            break;
+                        }
                         Err(err) => {
-                            tracing::error!("Publisher id={} failed to read rtp: {}", id, err);
+                            tracing::error!("Publisher id={} failed to read rtp: {:#?}", id, err);
                             break;
                         }
                     }
