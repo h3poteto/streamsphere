@@ -151,7 +151,7 @@ export default function Room() {
   const capture = async () => {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: true,
+      audio: false,
     });
 
     if (sendingVideoRef.current) {
