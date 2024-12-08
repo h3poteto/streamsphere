@@ -117,7 +117,7 @@ impl Publisher {
                         Err(webrtc::error::Error::ErrClosedPipe) =>{
                             break;
                         }
-                        Err(webrtc::error::Error::Interceptor(interceptor::Error::Srtp(webrtc_srtp::Error::Util(webrtc_util::Error::ErrBufferClosed)))) => {
+                        Err(webrtc::error::Error::Interceptor(webrtc::interceptor::Error::Srtp(webrtc_srtp::Error::Util(webrtc_util::Error::ErrBufferClosed)))) => {
                             break;
                         }
                         Err(err) => {
