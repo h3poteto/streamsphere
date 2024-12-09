@@ -12,5 +12,6 @@
     "rheomesh": "workspace:^",
     "typescript": "^5.2.2",
     "vite": "^6.0.0"
-  }
+  },
+  "packageManager": "yarn@4.5.3"
 }
