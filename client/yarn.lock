@@ -1450,12 +1450,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react-dom@npm:^18":
-  version: 18.3.2
-  resolution: "@types/react-dom@npm:18.3.2"
-  dependencies:
-    "@types/react": "npm:^18"
-  checksum: 10c0/22510231af67044a9542633b5b52ec16a8d71fa1da177f82428b8120d36619fd874c3b975b2eda6895baa53667f9fe8cba3acea1232a0244dffe8b11f6b32284
+"@types/react-dom@npm:^18.3.3":
+  version: 18.3.3
+  resolution: "@types/react-dom@npm:18.3.3"
+  peerDependencies:
+    "@types/react": ^18.0.0
+  checksum: 10c0/f0bc467e09bfd1212bc350826de0faa155e1d77c5e3d8fbed3b172187173baeb90161474d2ef40df59204974a9712827baa3c46ffa7c66ba433b696f7715cb15
   languageName: node
   linkType: hard
 
@@ -2155,9 +2155,9 @@ __metadata:
   linkType: hard
 
 "electron-to-chromium@npm:^1.5.41":
-  version: 1.5.71
-  resolution: "electron-to-chromium@npm:1.5.71"
-  checksum: 10c0/f6fdeec0e1d68634cf92c267bdce3e50af947ce2c8fb1034df3e738c536b3033e311ad0fb9a6c4c35f678f10a299e4f78fdfcedbaa78d8992fedc443a7363d6d
+  version: 1.5.72
+  resolution: "electron-to-chromium@npm:1.5.72"
+  checksum: 10c0/1a9a55048cbd0c3823fa634a6384d5d9a537c47969ff9eb18ec7600dd71f08321514b7ec30a4a54267327ac814ac810926fb60a1b55feec18c3d9de57d646b7e
   languageName: node
   linkType: hard
 
@@ -3730,7 +3730,7 @@ __metadata:
   dependencies:
     "@types/node": "npm:^20"
     "@types/react": "npm:^18"
-    "@types/react-dom": "npm:^18"
+    "@types/react-dom": "npm:^18.3.3"
     next: "npm:15.0.4"
     react: "npm:^18.3"
     react-dom: "npm:^18.3"
