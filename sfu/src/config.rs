@@ -5,9 +5,21 @@ use webrtc::{
     api::setting_engine::SettingEngine, peer_connection::configuration::RTCConfiguration,
     rtp_transceiver::rtp_codec::RTCRtpCodecParameters, sdp::extmap,
 };
-use webrtc_ice::network_type::NetworkType;
+use webrtc_ice::{
+    network_type::NetworkType,
+    udp_network::{EphemeralUDP, UDPNetwork},
+};
 
 const EXT_TOFFSET: &str = "urn:ietf:params:rtp-hdrext:toffset";
+
+/// PortRange for [`WebRTCTransportConfig`]. In server side, random ports within this range are assigned for UDP connections.
+#[derive(Clone, Debug)]
+pub struct PortRange {
+    /// Min port for UDP connections. It should be less than max.
+    pub min: u16,
+    /// Max port for UDP connections. It should be grather than min.
+    pub max: u16,
+}
 
 /// Configuration for [`crate::publish_transport::PublishTransport`] and [`crate::subscribe_transport::SubscribeTransport`].
 #[derive(Derivative)]
@@ -22,6 +34,7 @@ pub struct WebRTCTransportConfig {
     pub network_types: Vec<NetworkType>,
     pub ice_username_fragment: Option<String>,
     pub ice_password: Option<String>,
+    pub port_range: Option<PortRange>,
 }
 
 impl Default for WebRTCTransportConfig {
@@ -37,6 +50,7 @@ impl Default for WebRTCTransportConfig {
             network_types: vec![],
             ice_username_fragment: None,
             ice_password: None,
+            port_range: None,
         }
     }
 }
@@ -76,6 +90,14 @@ impl WebRTCTransportConfig {
             let username = self.ice_username_fragment.clone().unwrap_or("".to_string());
             let password = self.ice_password.clone().unwrap_or("".to_string());
             setting_engine.set_ice_credentials(username, password);
+        }
+
+        if let Some(port_range) = &self.port_range {
+            let ephemeral = EphemeralUDP::new(port_range.min, port_range.max)
+                .expect("failed to define ephemeral UDP");
+
+            let udp_network = UDPNetwork::Ephemeral(ephemeral);
+            setting_engine.set_udp_network(udp_network);
         }
 
         setting_engine

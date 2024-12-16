@@ -107,6 +107,11 @@ impl WebSocket {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }];
+        // Port range of your server.
+        config.port_range = Some(rheomesh::config::PortRange {
+            min: 12000,
+            max: 15000,
+        });
 
         let publish_transport = router.create_publish_transport(config.clone()).await;
         let subscribe_transport = router.create_subscribe_transport(config).await;
