@@ -19,7 +19,7 @@ enclose = "1.2.0"
 rand = "0.8.5"
 serde = { version = "1.0.210", features = ["derive"]}
 serde_json = "1.0.128"
-thiserror = "1.0.64"
+thiserror = "2.0.0"
 tokio = "1.38.0"
 tracing = "0.1.40"
 tracing-actix-web = "0.7.13"
